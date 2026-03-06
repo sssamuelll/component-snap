@@ -9,7 +9,7 @@ export default defineManifest({
     default_title: 'Component Snap',
     default_popup: 'index.html',
   },
-  permissions: ['activeTab', 'scripting', 'storage', 'tabs', 'downloads'],
+  permissions: ['activeTab', 'scripting', 'storage', 'tabs', 'downloads', 'unlimitedStorage'],
   host_permissions: ['<all_urls>'],
   background: {
     service_worker: 'src/background.ts',
