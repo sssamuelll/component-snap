@@ -1,7 +1,7 @@
 const esc = (value: string) => {
   const maybeCss = globalThis.CSS as { escape?: (input: string) => string } | undefined
   if (maybeCss?.escape) return maybeCss.escape(value)
-  return value.replace(/([\"'\\.#:[\]()\s])/g, '\\$1')
+  return value.replace(/(["'\\.#:[\]()\s])/g, '\\$1')
 }
 
 export const buildStableSelector = (el: HTMLElement): string => {

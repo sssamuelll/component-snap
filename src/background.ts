@@ -26,8 +26,6 @@ type StoredPayload = {
     html?: string
     css?: string
     freezeHtml?: string
-    rawHtml?: string
-    rawCss?: string
     js?: string
     kind?: string
     screenshotDataUrl?: string
@@ -107,8 +105,6 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   const portableHtml = payload.element?.html || '<!-- no html captured -->'
   const portableCss = payload.element?.css || '/* no css captured */'
   const freezeHtml = payload.element?.freezeHtml || portableHtml
-  const rawComponentHtml = payload.element?.rawHtml || portableHtml
-  const rawCss = payload.element?.rawCss || portableCss
   const js = payload.element?.js || "console.log('[component-snap] no js captured')"
   const meta = JSON.stringify(payload, null, 2)
 
@@ -126,20 +122,26 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   </body>
 </html>`
 
-  await saveDataUrl(toDataUrlFromText(htmlDoc(portableHtml, './component.css', './component.js'), 'text/html;charset=utf-8'), `${folder}/portable/component.html`)
-  await saveDataUrl(toDataUrlFromText(portableCss, 'text/css;charset=utf-8'), `${folder}/portable/component.css`)
-  await saveDataUrl(toDataUrlFromText(js, 'text/javascript;charset=utf-8'), `${folder}/portable/component.js`)
+  await saveDataUrl(toDataUrlFromText(htmlDoc(portableHtml, './component.css', './component.js'), 'text/html;charset=utf-8'), `${folder}/component.html`)
+  await saveDataUrl(toDataUrlFromText(portableCss, 'text/css;charset=utf-8'), `${folder}/component.css`)
+  await saveDataUrl(toDataUrlFromText(js, 'text/javascript;charset=utf-8'), `${folder}/component.js`)
 
   const freezeDoc = `<!doctype html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Component Snap Freeze</title></head>
-  <body style="margin:0;padding:0;display:inline-block;">${freezeHtml}</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Component Snap Freeze</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; }
+      #freeze-root { display: inline-block; }
+    </style>
+  </head>
+  <body>
+    <div id="freeze-root">${freezeHtml}</div>
+  </body>
 </html>`
-  await saveDataUrl(toDataUrlFromText(freezeDoc, 'text/html;charset=utf-8'), `${folder}/portable/snapshot.html`)
-
-  await saveDataUrl(toDataUrlFromText(htmlDoc(rawComponentHtml, './component.css', './component.js'), 'text/html;charset=utf-8'), `${folder}/raw/component.html`)
-  await saveDataUrl(toDataUrlFromText(rawCss, 'text/css;charset=utf-8'), `${folder}/raw/component.css`)
-  await saveDataUrl(toDataUrlFromText(js, 'text/javascript;charset=utf-8'), `${folder}/raw/component.js`)
+  await saveDataUrl(toDataUrlFromText(freezeDoc, 'text/html;charset=utf-8'), `${folder}/snapshot.html`)
 
   await saveDataUrl(toDataUrlFromText(meta, 'application/json;charset=utf-8'), `${folder}/meta.json`)
 
