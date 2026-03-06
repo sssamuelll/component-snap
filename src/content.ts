@@ -48,16 +48,16 @@ const STYLE_PROPS = [
   'user-select', 'object-fit', 'object-position', 'vertical-align',
 ]
 
-const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio'])
+const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio', 'xlink:href', 'href'])
 
 const resolveUrl = (url: string) => {
-  if (!url || url.startsWith('data:') || url.startsWith('http') || url.startsWith('//')) return url
+  if (!url || url.startsWith('data:') || url.startsWith('http') || url.startsWith('//') || url.startsWith('#')) return url
   try { return new URL(url, window.location.href).href } catch { return url }
 }
 
 const assetCache = new Map<string, string>()
 const toBase64 = async (url: string): Promise<string> => {
-  if (!url || url.startsWith('data:')) return url
+  if (!url || url.startsWith('data:') || url.startsWith('#')) return url
   if (assetCache.has(url)) return assetCache.get(url)!
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'FETCH_ASSET', url })
@@ -66,7 +66,7 @@ const toBase64 = async (url: string): Promise<string> => {
   } catch { return url }
 }
 
-const inlineAllResourcesInText = async (text: string): Promise<string> => {
+const inlineResources = async (text: string): Promise<string> => {
   const matches = Array.from(text.matchAll(/url\(['"]?([^'")]*)['"]?\)/g))
   if (matches.length === 0) return text
   let result = text
@@ -81,10 +81,10 @@ const findVisualRoot = (target: HTMLElement) => {
     const cls = (el.className?.toString() || '').toLowerCase(), tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el), box = el.getBoundingClientRect(), area = Math.max(1, box.width * box.height), areaRatio = area / vArea
     if (areaRatio > 0.95) return -1000
     const hasS = style.boxShadow !== 'none' && !style.boxShadow.includes('rgba(0, 0, 0, 0)'), hasR = parseFloat(style.borderRadius) > 4, hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent'
-    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header') || tag === 'shreddit-app'
+    const isS = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header') || tag === 'shreddit-app'
     const isC = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || cls.includes('menu') || cls.includes('bar')
     const hasRich = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase()))
-    let score = (hasS ? 60 : 0) + (hasR ? 40 : 0) + (hasBg ? 15 : 0) + (hasS && hasR ? 100 : 0) + (isShell ? 150 : 0) + (isC ? 80 : 0) + (hasRich ? 60 : 0)
+    let score = (hasS ? 60 : 0) + (hasR ? 40 : 0) + (hasBg ? 15 : 0) + (hasS && hasR ? 100 : 0) + (isS ? 150 : 0) + (isC ? 80 : 0) + (hasRich ? 60 : 0)
     if (areaRatio > 0.8) score -= 300
     return score
   }
@@ -96,16 +96,15 @@ const findVisualRoot = (target: HTMLElement) => {
   return best
 }
 
-const getFlattenedNodes = (root: Node): (HTMLElement | SVGElement)[] => {
-  const result: (HTMLElement | SVGElement)[] = []
-  const walk = (node: Node) => {
-    if (node instanceof HTMLElement || node instanceof SVGElement) {
-      result.push(node)
-      if (node.shadowRoot) for (const child of Array.from(node.shadowRoot.childNodes)) walk(child)
+// CRITICAL FIX: Unified traversal for Original and Clone
+const walkUnified = (node: Node, cb: (n: HTMLElement | SVGElement) => void) => {
+  if (node instanceof HTMLElement || node instanceof SVGElement) {
+    cb(node)
+    if (node.shadowRoot) {
+      for (const child of Array.from(node.shadowRoot.childNodes)) walkUnified(child, cb)
     }
-    for (const child of Array.from(node.childNodes)) walk(child)
   }
-  walk(root); return result
+  for (const child of Array.from(node.childNodes)) walkUnified(child, cb)
 }
 
 const deepCloneAndFlatten = (node: Node): Node => {
@@ -121,27 +120,64 @@ const deepCloneAndFlatten = (node: Node): Node => {
 
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   const clone = deepCloneAndFlatten(root) as HTMLElement
-  const originalNodes = getFlattenedNodes(root), clonedNodes = getFlattenedNodes(clone)
+  
+  // Synchronized mapping
+  const originalNodes: (HTMLElement | SVGElement)[] = []
+  walkUnified(root, (n) => originalNodes.push(n))
+  
+  const clonedNodes: (HTMLElement | SVGElement)[] = []
+  // Clone is already flattened, so a standard walk is fine and will match the unified walk order
+  const walkClone = (n: Node) => {
+    if (n instanceof HTMLElement || n instanceof SVGElement) {
+      clonedNodes.push(n)
+      for (const child of Array.from(n.childNodes)) walkClone(child)
+    }
+  }
+  walkClone(clone)
 
   const rootBox = root.getBoundingClientRect()
   clone.style.width = `${rootBox.width}px`; clone.style.height = `${rootBox.height}px`; clone.style.position = 'relative'
 
+  // Symbol Harvester: Find global symbols referenced by component
+  const referencedIds = new Set<string>()
+  originalNodes.forEach(node => {
+    Array.from(node.attributes).forEach(attr => {
+      const match = attr.value.match(/url\(#([^)]+)\)/) || attr.value.match(/^#(.+)$/)
+      if (match) referencedIds.add(match[1])
+    })
+  })
+
+  if (referencedIds.size) {
+    const symbolDictionary = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    symbolDictionary.style.display = 'none'
+    referencedIds.forEach(id => {
+      const original = document.getElementById(id)
+      if (original) symbolDictionary.appendChild(original.cloneNode(true))
+    })
+    if (symbolDictionary.children.length > 0) clone.prepend(symbolDictionary)
+  }
+
+  // Atomic Style Freezing
   for (let index = 0; index < clonedNodes.length; index++) {
     const node = clonedNodes[index], orig = originalNodes[index]
-    if (!orig || !orig.isConnected) continue
+    if (!orig) continue
+    
     const comp = window.getComputedStyle(orig)
     const stylePairs: string[] = []
     for (const p of STYLE_PROPS) {
       const val = comp.getPropertyValue(p).trim()
-      if (val) stylePairs.push(`${p}:${await inlineAllResourcesInText(val)}`)
+      if (val) stylePairs.push(`${p}:${await inlineResources(val)}`)
     }
     node.setAttribute('style', stylePairs.join(';'))
+
     Array.from(node.attributes).forEach(attr => {
-      const name = attr.name, lower = name.toLowerCase(), allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
+      const name = attr.name, lower = name.toLowerCase()
       if (name === 'style') return
+      const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
       if (!allowed) { node.removeAttribute(name); return }
-      if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
+      if (['src', 'href', 'poster', 'xlink:href'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
     })
+    
     node.setAttribute('data-csnap', String(index))
     if (orig === picked) node.setAttribute('data-csnap-picked', 'true')
     if (['style', 'script'].includes(node.tagName.toLowerCase())) node.remove()
@@ -171,29 +207,6 @@ if (!root) {
       setTimeout(() => ripple.remove(), 500);
     });
   });
-  let activeElement = null, startX = 0, startY = 0, initialTransform = '';
-  const isDraggable = (el) => {
-    const tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el);
-    return tag === 'piece' || el.classList.contains('piece') || style.cursor === 'grab' || style.cursor === 'pointer';
-  };
-  root.addEventListener('mousedown', (e) => {
-    const target = e.target.closest('*');
-    if (target && isDraggable(target)) {
-      activeElement = target; startX = e.clientX; startY = e.clientY; initialTransform = target.style.transform || '';
-      activeElement.style.zIndex = '1000'; activeElement.style.cursor = 'grabbing'; e.preventDefault();
-    }
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!activeElement) return;
-    const dx = e.clientX - startX, dy = e.clientY - startY;
-    const tm = initialTransform.match(/translate\\(([^,)]+),?([^)]*)\\)/) || initialTransform.match(/translate3d\\(([^,)]+),?([^,)]+),?([^)]*)\\)/);
-    if (tm) {
-      activeElement.style.transform = \`translate(\${parseFloat(tm[1]) + dx}px, \${parseFloat(tm[2]) + dy}px)\`;
-    } else {
-      activeElement.style.transform = \`translate(\${dx}px, \${dy}px)\`;
-    }
-  });
-  window.addEventListener('mouseup', () => { if (activeElement) { activeElement.style.zIndex = ''; activeElement.style.cursor = ''; activeElement = null; } });
 }
 `
 
