@@ -129,7 +129,8 @@ const collectPseudoDeclarations = (el: HTMLElement | SVGElement, pseudo: ':hover
           if (norm && el.matches(norm)) {
             for (let i = 0; i < rule.style.length; i++) {
               const p = rule.style[i]
-              declarations.set(p, rule.style.getPropertyValue(p).trim())
+              const val = rule.style.getPropertyValue(p).trim()
+              if (val) declarations.set(p, val)
             }
           }
         }
@@ -168,78 +169,71 @@ const inlineAllResourcesInText = async (text: string): Promise<string> => {
 }
 
 const getPreferredColorScheme = () => {
-  const html = document.documentElement;
-  const body = document.body;
-  const style = window.getComputedStyle(html);
-  const bodyStyle = window.getComputedStyle(body);
+  const html = document.documentElement, body = document.body;
+  const style = window.getComputedStyle(html), bodyStyle = window.getComputedStyle(body);
   return style.colorScheme || bodyStyle.colorScheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }
 
 const findVisualRoot = (target: HTMLElement) => {
-  let best = target
-  const vArea = Math.max(1, window.innerWidth * window.innerHeight)
-  
+  let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
   const getElementScore = (el: HTMLElement) => {
-    const cls = (el.className?.toString() || '').toLowerCase()
-    const tag = el.tagName.toLowerCase()
-    const style = window.getComputedStyle(el)
-    const box = el.getBoundingClientRect()
-    const area = Math.max(1, box.width * box.height)
-    const areaRatio = area / vArea
-
+    const cls = (el.className?.toString() || '').toLowerCase(), tag = el.tagName.toLowerCase()
+    const style = window.getComputedStyle(el), box = el.getBoundingClientRect()
+    const area = Math.max(1, box.width * box.height), areaRatio = area / vArea
     if (areaRatio > 0.95) return -1000
-
     const hasShadow = style.boxShadow !== 'none' && !style.boxShadow.includes('rgba(0, 0, 0, 0)')
     const hasRadius = parseFloat(style.borderRadius) > 4
     const hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent'
     const hasBorder = style.borderStyle !== 'none' && style.borderWidth !== '0px'
-    
-    // Modern apps (Reddit, Google) use specific keywords for shells
-    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || 
-                    cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || 
-                    tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header')
-    
-    const isComponent = cls.includes('search') || cls.includes('board') || cls.includes('card') || 
-                        tag.includes('board') || cls.includes('menu') || cls.includes('bar')
-    
-    const hasRichSiblings = el.parentElement && Array.from(el.parentElement.children).some(s => 
-      ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase())
-    )
-
+    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header')
+    const isComponent = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || cls.includes('menu') || cls.includes('bar')
+    const hasRichSiblings = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase()))
     let score = (hasShadow ? 60 : 0) + (hasRadius ? 40 : 0) + (hasBg ? 15 : 0) + (hasBorder ? 10 : 0)
-    if (hasShadow && hasRadius) score += 100 // High confidence shell marker
-    
-    score += isShell ? 120 : 0
-    score += isComponent ? 60 : 0
-    score += hasRichSiblings ? 50 : 0
-    
-    // Penalize massive elements that are likely page layouts
+    if (hasShadow && hasRadius) score += 100
+    score += isShell ? 120 : 0; score += isComponent ? 60 : 0; score += hasRichSiblings ? 50 : 0
     if (areaRatio > 0.8) score -= 300
     return score
   }
-
   let currentElement = target
-  
   for (let depth = 0; depth < 15 && currentElement && currentElement !== document.body; depth++) {
     const score = getElementScore(currentElement)
-    console.log(`[findVisualRoot] Checking ${currentElement.tagName}.${currentElement.className.toString().slice(0,20)} depth=${depth} score=${score.toFixed(2)}`)
-    
-    // If the score is high enough, this is a strong candidate for the "Shell"
-    if (score > 30) {
-      best = currentElement
-      console.log(`[findVisualRoot] New potential shell: ${currentElement.tagName} (${score.toFixed(2)})`)
-    }
+    if (score > 30) best = currentElement
     currentElement = currentElement.parentElement as HTMLElement
   }
-
-  console.log(`[findVisualRoot] Final choice: ${best.tagName}`)
   return best
 }
 
+const getDeepAllNodes = (root: Node): Node[] => {
+  const nodes: Node[] = [root]
+  if (root instanceof HTMLElement || root instanceof SVGElement) {
+    if (root.shadowRoot) nodes.push(...getDeepAllNodes(root.shadowRoot))
+    for (const child of Array.from(root.childNodes)) nodes.push(...getDeepAllNodes(child))
+  } else if (root instanceof ShadowRoot) {
+    for (const child of Array.from(root.childNodes)) nodes.push(...getDeepAllNodes(child))
+  }
+  return nodes
+}
+
+const deepCloneAndFlatten = (node: Node): Node => {
+  const clone = node.cloneNode(false)
+  if (node instanceof HTMLElement || node instanceof SVGElement) {
+    // If it has a shadow root, we flatten its contents into the standard child list
+    if (node.shadowRoot) {
+      for (const child of Array.from(node.shadowRoot.childNodes)) {
+        clone.appendChild(deepCloneAndFlatten(child))
+      }
+    }
+  }
+  for (const child of Array.from(node.childNodes)) {
+    clone.appendChild(deepCloneAndFlatten(child))
+  }
+  return clone
+}
+
 const freezeSubtree = async (root: HTMLElement) => {
-  const clone = root.cloneNode(true) as HTMLElement
-  const originalNodes = [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]
-  const clonedNodes = [clone, ...Array.from(clone.querySelectorAll<HTMLElement>('*'))]
+  const clone = deepCloneAndFlatten(root) as HTMLElement
+  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
+  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
 
   for (let index = 0; index < clonedNodes.length; index++) {
     const node = clonedNodes[index], orig = originalNodes[index]
@@ -247,16 +241,13 @@ const freezeSubtree = async (root: HTMLElement) => {
     if (['script', 'style'].includes(node.tagName.toLowerCase())) { node.remove(); continue }
     const computed = window.getComputedStyle(orig)
     if (computed.display === 'none' || computed.visibility === 'hidden') { node.remove(); continue }
-
-    const defaults = getDefaultStyles(orig.tagName)
-    const stylePairs: string[] = []
+    const defaults = getDefaultStyles(orig.tagName), stylePairs: string[] = []
     for (const prop of STYLE_PROPS) {
       const val = computed.getPropertyValue(prop).trim()
       if (!val || val === defaults[prop]) continue
       stylePairs.push(`${prop}:${await inlineAllResourcesInText(val)}`)
     }
     if (stylePairs.length) node.setAttribute('style', stylePairs.join(';'))
-
     Array.from(node.attributes).forEach(attr => {
       const name = attr.name, lower = name.toLowerCase()
       const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
@@ -273,8 +264,7 @@ const getAllUniqueVariableNames = () => {
     try {
       for (const rule of Array.from(sheet.cssRules)) {
         if (rule instanceof CSSStyleRule) {
-          const text = rule.style.cssText
-          const matches = text.match(/--[a-zA-Z0-9_-]+/g)
+          const text = rule.style.cssText, matches = text.match(/--[a-zA-Z0-9_-]+/g)
           if (matches) matches.forEach(n => names.add(n))
         }
       }
@@ -284,85 +274,30 @@ const getAllUniqueVariableNames = () => {
 }
 
 const getVariables = (el: HTMLElement) => {
-  const vars = new Map<string, string>()
-  const allNames = getAllUniqueVariableNames()
-  
-  // Collect all ancestors up to html
-  const targetRoots: HTMLElement[] = [el]
-  let curr: HTMLElement | null = el.parentElement
-  while (curr) {
-    targetRoots.unshift(curr)
-    curr = curr.parentElement
-  }
-
-  // Iterate from top to bottom so children override parents (standard CSS inheritance)
+  const vars = new Map<string, string>(), allNames = getAllUniqueVariableNames()
+  const targetRoots: HTMLElement[] = [el]; let curr: HTMLElement | null = el.parentElement
+  while (curr) { targetRoots.unshift(curr); curr = curr.parentElement }
   for (const root of targetRoots) {
     const computed = window.getComputedStyle(root)
-    for (const name of allNames) {
-      const val = computed.getPropertyValue(name).trim()
-      if (val) vars.set(name, val)
-    }
-    // Also check for inline style variables
+    for (const name of allNames) { const val = computed.getPropertyValue(name).trim(); if (val) vars.set(name, val) }
     for (let i = 0; i < root.style.length; i++) {
-      const prop = root.style[i]
-      if (prop.startsWith('--')) {
-        vars.set(prop, computed.getPropertyValue(prop).trim())
-      }
+      const prop = root.style[i]; if (prop.startsWith('--')) vars.set(prop, computed.getPropertyValue(prop).trim())
     }
   }
   return vars
 }
 
-const getDeepAllNodes = (root: Node): Node[] => {
-  const nodes: Node[] = [root];
-  if (root instanceof HTMLElement || root instanceof SVGElement) {
-    if (root.shadowRoot) {
-      nodes.push(...getDeepAllNodes(root.shadowRoot));
-    }
-    for (const child of Array.from(root.childNodes)) {
-      nodes.push(...getDeepAllNodes(child));
-    }
-  } else if (root instanceof ShadowRoot) {
-    for (const child of Array.from(root.childNodes)) {
-      nodes.push(...getDeepAllNodes(child));
-    }
-  }
-  return nodes;
-}
-
-const deepCloneNode = (node: Node): Node => {
-  const clone = node.cloneNode(false);
-  
-  if (node instanceof HTMLElement || node instanceof SVGElement) {
-    if (node.shadowRoot) {
-      const shadowClone = (clone as HTMLElement).attachShadow({ mode: node.shadowRoot.mode });
-      for (const child of Array.from(node.shadowRoot.childNodes)) {
-        shadowClone.appendChild(deepCloneNode(child));
-      }
-    }
-  }
-  
-  for (const child of Array.from(node.childNodes)) {
-    clone.appendChild(deepCloneNode(child));
-  }
-  
-  return clone;
-}
-
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
-  const clone = deepCloneNode(root) as HTMLElement
+  const clone = deepCloneAndFlatten(root) as HTMLElement
   const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-  
-  // To keep indexing stable for [data-csnap], we need a matching traversal for the clone
   const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
 
   const rootBox = root.getBoundingClientRect()
   clone.style.width = `${rootBox.width}px`; clone.style.height = `${rootBox.height}px`; clone.style.position = 'relative'
 
   clonedNodes.forEach((node, index) => {
-    const orig = originalNodes[index];
-    if (!orig) return;
-
+    const orig = originalNodes[index]
+    if (!orig) return
     Array.from(node.attributes).forEach(attr => {
       const name = attr.name, lower = name.toLowerCase()
       const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
@@ -387,8 +322,7 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
     Array.from(node.attributes).forEach(attr => {
       const m = attr.value.match(/url\(#([^)]+)\)/); if (m) defsToInclude.add(m[1])
     })
-    const style = window.getComputedStyle(node)
-    const mProps = ['marker-start', 'marker-mid', 'marker-end', 'clip-path', 'mask']
+    const style = window.getComputedStyle(node), mProps = ['marker-start', 'marker-mid', 'marker-end', 'clip-path', 'mask']
     mProps.forEach(p => { const m = style.getPropertyValue(p).match(/url\(#([^)]+)\)/); if (m) defsToInclude.add(m[1]) })
   })
 
@@ -407,7 +341,6 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
     const computed = window.getComputedStyle(orig), defaults = getDefaultStyles(orig.tagName)
     const selector = `[data-csnap="${index}"]`
     let block = `${selector} {\n`, hasProps = false
-
     for (const p of STYLE_PROPS) {
       const val = computed.getPropertyValue(p).trim()
       if (!val) continue
@@ -415,7 +348,6 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
       if (isC || val !== defaults[p]) { block += `  ${p}: ${val};\n`; hasProps = true }
     }
     block += '}\n'; if (hasProps) css += block + '\n'
-
     const states: (':hover' | ':focus' | ':active')[] = [':hover', ':focus', ':active']
     for (const s of states) {
       const decls = collectPseudoDeclarations(orig, s)
@@ -425,7 +357,6 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
         css += '}\n\n'
       }
     }
-
     for (const p of ["::before", "::after"] as const) {
       const pc = window.getComputedStyle(orig, p), c = pc.getPropertyValue("content")
       if (c && !['none', '""', "''"].includes(c)) {
@@ -434,7 +365,6 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
         css += '}\n\n'
       }
     }
-
     const anim = computed.animationName
     if (anim && anim !== 'none') {
       for (const n of anim.split(',').map(s => s.trim())) {
@@ -447,9 +377,7 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
     }
   }
 
-  const inlinedCss = await inlineAllResourcesInText(css)
-  const fontFaces = getUsedFontFaces()
-  const scheme = getPreferredColorScheme()
+  const inlinedCss = await inlineAllResourcesInText(css), fontFaces = getUsedFontFaces(), scheme = getPreferredColorScheme()
   const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
   const bgColor = scheme === 'dark' ? '#1a1a1b' : '#fff'
   const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${bgColor};}#component-snap-root{display:block;}`
@@ -467,6 +395,23 @@ const root = document.querySelector(rootSelector);
 if (!root) {
   console.warn('[component-snap] root not found:', rootSelector);
 } else {
+  console.log('[component-snap] Active Snapshot Mounted:', root);
+  
+  // Action Mirror Engine
+  const interactive = root.querySelectorAll('button, a, input, [role="button"], piece, .piece');
+  interactive.forEach(el => {
+    el.addEventListener('click', (e) => {
+      console.log('[component-snap] Action Intercepted:', el.tagName, el.className);
+      const ripple = document.createElement('div');
+      ripple.style.cssText = 'position:fixed;width:20px;height:20px;background:rgba(59,130,246,0.4);border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);transition:all 0.4s ease-out;z-index:9999;';
+      ripple.style.left = e.clientX + 'px'; ripple.style.top = e.clientY + 'px';
+      document.body.appendChild(ripple);
+      setTimeout(() => { ripple.style.width = '100px'; ripple.style.height = '100px'; ripple.style.opacity = '0'; }, 10);
+      setTimeout(() => ripple.remove(), 500);
+    });
+  });
+
+  // Drag & Drop Shim
   let activeElement = null, startX = 0, startY = 0, initialTransform = '';
   const isDraggable = (el) => {
     const tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el);
