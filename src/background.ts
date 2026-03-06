@@ -32,8 +32,21 @@ type StoredPayload = {
   }
 }
 
+type DebugEvent = {
+  at: string
+  level: 'info' | 'error'
+  requestId?: string
+  event: string
+  detail?: string
+}
+
+const activeRequests = new Map<string, number>()
+const debugLog: DebugEvent[] = []
+
 const log = (event: string, level: 'info' | 'error' = 'info', requestId?: string, detail?: string) => {
   console.log(`[${level}] ${event} ${requestId || ''}`, detail || '')
+  debugLog.unshift({ at: new Date().toISOString(), level, event, requestId, detail })
+  if (debugLog.length > 120) debugLog.length = 120
 }
 
 const sanitize = (input: string) => input.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
@@ -133,6 +146,34 @@ const saveSnapFiles = async (payload: StoredPayload) => {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'START_INSPECT_TAB') {
+    const requestId = Math.random().toString(36).slice(2, 9)
+    activeRequests.set(requestId, message.tabId)
+    log('start_inspect_tab', 'info', requestId, `tabId: ${message.tabId}`)
+
+    chrome.tabs.sendMessage(message.tabId, { type: 'START_INSPECT', requestId }, (response: any) => {
+      if (chrome.runtime.lastError) {
+        log('start_inspect_failed', 'error', requestId, chrome.runtime.lastError.message)
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
+      } else {
+        sendResponse({ ok: true, requestId, response })
+      }
+    })
+    return true
+  }
+
+  if (message?.type === 'GET_LAST_SELECTION') {
+    chrome.storage.local.get(['lastSelection'], (result) => {
+      sendResponse({ ok: true, data: result.lastSelection })
+    })
+    return true
+  }
+
+  if (message?.type === 'GET_DEBUG_LOGS') {
+    sendResponse({ ok: true, data: debugLog })
+    return true
+  }
+
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
       try {
@@ -145,7 +186,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // CRITICAL FIX: Clear old storage to prevent quota errors
         await chrome.storage.local.clear()
         
-        // Store metadata + folder, but keep payload for repro scripts (optional reduction here if needed)
+        // Store metadata + folder, but keep payload for repro scripts
         await chrome.storage.local.set({ 
           lastSelection: { 
             ...message.payload, 
@@ -158,8 +199,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         log('capture_done', 'info', message.requestId)
         
         try {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-          if (tab.id) await chrome.tabs.sendMessage(tab.id, { type: 'CAPTURE_DONE', requestId: message.requestId, folder })
+          const tabId = activeRequests.get(message.requestId)
+          if (tabId) {
+            await chrome.tabs.sendMessage(tabId, { type: 'CAPTURE_DONE', requestId: message.requestId, folder })
+            activeRequests.delete(message.requestId)
+          }
         } catch {
           log('capture_done_no_listener', 'error', message.requestId)
         }
