@@ -7,29 +7,15 @@ type ContentMessage =
   | { type: 'CAPTURE_DONE'; requestId: string; folder?: string }
 
 type ElementSnap = {
-  title: string
-  url: string
-  selection: string
+  title: string; url: string; selection: string;
   element?: {
-    tag: string
-    id: string
-    classes: string[]
-    text: string
-    selector: string
-    selectedSelector?: string
-    html: string
-    css: string
-    freezeHtml: string
-    js: string
-    kind: string
+    tag: string; id: string; classes: string[]; text: string; selector: string;
+    selectedSelector?: string; html: string; css: string; freezeHtml: string; js: string; kind: string;
   }
 }
 
-let isInspecting = false
-let isProcessing = false
-let currentRequestId: string | null = null
-let overlay: HTMLDivElement | null = null
-let blocker: HTMLDivElement | null = null
+let isInspecting = false, isProcessing = false, currentRequestId: string | null = null
+let overlay: HTMLDivElement | null = null, blocker: HTMLDivElement | null = null
 
 const STYLE_PROPS = [
   'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 
@@ -62,83 +48,7 @@ const STYLE_PROPS = [
   'user-select', 'object-fit', 'object-position', 'vertical-align',
 ]
 
-const defaultStylesCache = new Map<string, Record<string, string>>()
-
-const getDefaultStyles = (tagName: string): Record<string, string> => {
-  const key = tagName.toLowerCase()
-  if (defaultStylesCache.has(key)) return defaultStylesCache.get(key)!
-
-  const iframe = document.createElement('iframe')
-  iframe.style.visibility = 'hidden'
-  iframe.style.width = '0'
-  iframe.style.height = '0'
-  iframe.style.position = 'absolute'
-  document.body.appendChild(iframe)
-
-  const doc = iframe.contentDocument || iframe.contentWindow?.document
-  const styles: Record<string, string> = {}
-
-  if (doc) {
-    let targetParent: HTMLElement = doc.body
-    if (key === 'li') {
-      const ul = doc.createElement('ul')
-      doc.body.appendChild(ul); targetParent = ul
-    } else if (['td', 'th', 'tr'].includes(key)) {
-      const table = doc.createElement('table')
-      const tbody = doc.createElement('tbody')
-      table.appendChild(tbody); doc.body.appendChild(table)
-      targetParent = (key === 'tr') ? tbody : doc.createElement('tr')
-      if (key !== 'tr') tbody.appendChild(targetParent)
-    }
-    const temp = doc.createElement(tagName)
-    targetParent.appendChild(temp)
-    const computed = iframe.contentWindow!.getComputedStyle(temp)
-    for (const prop of STYLE_PROPS) { styles[prop] = computed.getPropertyValue(prop) }
-  }
-  document.body.removeChild(iframe)
-  defaultStylesCache.set(key, styles)
-  return styles
-}
-
-const getUsedFontFaces = () => {
-  const fontFaces: string[] = []
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      for (const rule of Array.from(sheet.cssRules)) {
-        if (rule instanceof CSSFontFaceRule) fontFaces.push(rule.cssText)
-      }
-    } catch { continue }
-  }
-  return fontFaces.join('\n\n')
-}
-
-const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'onclick', 'onmousedown', 'onmouseup', 'onmouseover', 'onmouseout', 'onmouseenter', 'onmouseleave', 'onmousemove', 'onkeydown', 'onkeyup', 'onkeypress', 'onsubmit', 'onreset', 'onchange', 'onselect', 'oninput', 'onfocus', 'onblur', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio'])
-
-const normalizeSelectorForMatch = (selectorText: string) =>
-  selectorText.replace(/:hover/g, '').replace(/:focus-visible/g, '').replace(/:focus-within/g, '').replace(/:focus/g, '').replace(/:active/g, '').trim()
-
-const collectPseudoDeclarations = (el: HTMLElement | SVGElement, pseudo: ':hover' | ':focus' | ':active') => {
-  const declarations = new Map<string, string>()
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      for (const rule of Array.from(sheet.cssRules)) {
-        if (!(rule instanceof CSSStyleRule) || !rule.selectorText.includes(pseudo)) continue
-        for (const sel of rule.selectorText.split(',').map(s => s.trim())) {
-          if (!sel.includes(pseudo)) continue
-          const norm = normalizeSelectorForMatch(sel)
-          if (norm && el.matches(norm)) {
-            for (let i = 0; i < rule.style.length; i++) {
-              const p = rule.style[i]
-              const val = rule.style.getPropertyValue(p).trim()
-              if (val) declarations.set(p, val)
-            }
-          }
-        }
-      }
-    } catch { continue }
-  }
-  return declarations
-}
+const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio'])
 
 const resolveUrl = (url: string) => {
   if (!url || url.startsWith('data:') || url.startsWith('http') || url.startsWith('//')) return url
@@ -150,11 +60,8 @@ const toBase64 = async (url: string): Promise<string> => {
   if (!url || url.startsWith('data:')) return url
   if (assetCache.has(url)) return assetCache.get(url)!
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'FETCH_ASSET', url })
-    if (response?.ok && response?.data) {
-      assetCache.set(url, response.data)
-      return response.data
-    }
+    const resp = await chrome.runtime.sendMessage({ type: 'FETCH_ASSET', url })
+    if (resp?.ok && resp?.data) { assetCache.set(url, resp.data); return resp.data }
     return url
   } catch { return url }
 }
@@ -168,224 +75,82 @@ const inlineAllResourcesInText = async (text: string): Promise<string> => {
   return result
 }
 
-const getPreferredColorScheme = () => {
-  const html = document.documentElement, body = document.body;
-  const style = window.getComputedStyle(html), bodyStyle = window.getComputedStyle(body);
-  return style.colorScheme || bodyStyle.colorScheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-}
-
 const findVisualRoot = (target: HTMLElement) => {
   let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
-  const getElementScore = (el: HTMLElement) => {
-    const cls = (el.className?.toString() || '').toLowerCase(), tag = el.tagName.toLowerCase()
-    const style = window.getComputedStyle(el), box = el.getBoundingClientRect()
-    const area = Math.max(1, box.width * box.height), areaRatio = area / vArea
+  const getScore = (el: HTMLElement) => {
+    const cls = (el.className?.toString() || '').toLowerCase(), tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el), box = el.getBoundingClientRect(), area = Math.max(1, box.width * box.height), areaRatio = area / vArea
     if (areaRatio > 0.95) return -1000
-    const hasShadow = style.boxShadow !== 'none' && !style.boxShadow.includes('rgba(0, 0, 0, 0)')
-    const hasRadius = parseFloat(style.borderRadius) > 4
-    const hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent'
-    const hasBorder = style.borderStyle !== 'none' && style.borderWidth !== '0px'
-    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header')
-    const isComponent = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || cls.includes('menu') || cls.includes('bar')
-    const hasRichSiblings = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase()))
-    let score = (hasShadow ? 60 : 0) + (hasRadius ? 40 : 0) + (hasBg ? 15 : 0) + (hasBorder ? 10 : 0)
-    if (hasShadow && hasRadius) score += 100
-    score += isShell ? 120 : 0; score += isComponent ? 60 : 0; score += hasRichSiblings ? 50 : 0
+    const hasS = style.boxShadow !== 'none' && !style.boxShadow.includes('rgba(0, 0, 0, 0)'), hasR = parseFloat(style.borderRadius) > 4, hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent'
+    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header') || tag === 'shreddit-app'
+    const isC = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || cls.includes('menu') || cls.includes('bar')
+    const hasRich = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase()))
+    let score = (hasS ? 60 : 0) + (hasR ? 40 : 0) + (hasBg ? 15 : 0) + (hasS && hasR ? 100 : 0) + (isShell ? 150 : 0) + (isC ? 80 : 0) + (hasRich ? 60 : 0)
     if (areaRatio > 0.8) score -= 300
     return score
   }
-  let currentElement = target
-  for (let depth = 0; depth < 15 && currentElement && currentElement !== document.body; depth++) {
-    const score = getElementScore(currentElement)
-    if (score > 30) best = currentElement
-    currentElement = currentElement.parentElement as HTMLElement
+  let curr = target
+  for (let depth = 0; depth < 15 && curr && curr !== document.body; depth++) {
+    if (getScore(curr) > 30) best = curr
+    curr = curr.parentElement as HTMLElement
   }
   return best
 }
 
-const getDeepAllNodes = (root: Node): Node[] => {
-  const nodes: Node[] = [root]
-  if (root instanceof HTMLElement || root instanceof SVGElement) {
-    if (root.shadowRoot) nodes.push(...getDeepAllNodes(root.shadowRoot))
-    for (const child of Array.from(root.childNodes)) nodes.push(...getDeepAllNodes(child))
-  } else if (root instanceof ShadowRoot) {
-    for (const child of Array.from(root.childNodes)) nodes.push(...getDeepAllNodes(child))
+const getFlattenedNodes = (root: Node): (HTMLElement | SVGElement)[] => {
+  const result: (HTMLElement | SVGElement)[] = []
+  const walk = (node: Node) => {
+    if (node instanceof HTMLElement || node instanceof SVGElement) {
+      result.push(node)
+      if (node.shadowRoot) for (const child of Array.from(node.shadowRoot.childNodes)) walk(child)
+    }
+    for (const child of Array.from(node.childNodes)) walk(child)
   }
-  return nodes
+  walk(root); return result
 }
 
 const deepCloneAndFlatten = (node: Node): Node => {
   const clone = node.cloneNode(false)
   if (node instanceof HTMLElement || node instanceof SVGElement) {
     if (node.shadowRoot) {
-      for (const child of Array.from(node.shadowRoot.childNodes)) {
-        clone.appendChild(deepCloneAndFlatten(child))
-      }
+      for (const child of Array.from(node.shadowRoot.childNodes)) clone.appendChild(deepCloneAndFlatten(child))
     }
   }
-  for (const child of Array.from(node.childNodes)) {
-    clone.appendChild(deepCloneAndFlatten(child))
-  }
+  for (const child of Array.from(node.childNodes)) clone.appendChild(deepCloneAndFlatten(child))
   return clone
-}
-
-const getAllUniqueVariableNames = () => {
-  const names = new Set<string>()
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      for (const rule of Array.from(sheet.cssRules)) {
-        if (rule instanceof CSSStyleRule) {
-          const text = rule.style.cssText, matches = text.match(/--[a-zA-Z0-9_-]+/g)
-          if (matches) matches.forEach(n => names.add(n))
-        }
-      }
-    } catch { continue }
-  }
-  return Array.from(names)
-}
-
-const getVariables = (el: HTMLElement) => {
-  const vars = new Map<string, string>(), allNames = getAllUniqueVariableNames()
-  const targetRoots: HTMLElement[] = [el]; let curr: HTMLElement | null = el.parentElement
-  while (curr) { targetRoots.unshift(curr); curr = curr.parentElement }
-  for (const root of targetRoots) {
-    const computed = window.getComputedStyle(root)
-    for (const name of allNames) { const val = computed.getPropertyValue(name).trim(); if (val) vars.set(name, val) }
-    for (let i = 0; i < root.style.length; i++) {
-      const prop = root.style[i]; if (prop.startsWith('--')) vars.set(prop, computed.getPropertyValue(prop).trim())
-    }
-  }
-  return vars
-}
-
-const freezeSubtree = async (root: HTMLElement) => {
-  const clone = deepCloneAndFlatten(root) as HTMLElement
-  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-
-  for (let index = 0; index < clonedNodes.length; index++) {
-    const node = clonedNodes[index], orig = originalNodes[index]
-    if (!orig) continue
-    if (['script', 'style'].includes(node.tagName.toLowerCase())) { node.remove(); continue }
-    const computed = window.getComputedStyle(orig)
-    if (computed.display === 'none' || computed.visibility === 'hidden') { node.remove(); continue }
-    const defaults = getDefaultStyles(orig.tagName), stylePairs: string[] = []
-    for (const prop of STYLE_PROPS) {
-      const val = computed.getPropertyValue(prop).trim()
-      if (!val || val === defaults[prop]) continue
-      stylePairs.push(`${prop}:${await inlineAllResourcesInText(val)}`)
-    }
-    if (stylePairs.length) node.setAttribute('style', stylePairs.join(';'))
-    Array.from(node.attributes).forEach(attr => {
-      const name = attr.name, lower = name.toLowerCase()
-      const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
-      if (!allowed) { node.removeAttribute(name); return }
-      if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
-    })
-  }
-  return clone.outerHTML
 }
 
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   const clone = deepCloneAndFlatten(root) as HTMLElement
-  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
+  const originalNodes = getFlattenedNodes(root), clonedNodes = getFlattenedNodes(clone)
 
   const rootBox = root.getBoundingClientRect()
   clone.style.width = `${rootBox.width}px`; clone.style.height = `${rootBox.height}px`; clone.style.position = 'relative'
 
-  clonedNodes.forEach((node, index) => {
-    const orig = originalNodes[index]
-    if (!orig) return
+  for (let index = 0; index < clonedNodes.length; index++) {
+    const node = clonedNodes[index], orig = originalNodes[index]
+    if (!orig || !orig.isConnected) continue
+    const comp = window.getComputedStyle(orig)
+    const stylePairs: string[] = []
+    for (const p of STYLE_PROPS) {
+      const val = comp.getPropertyValue(p).trim()
+      if (val) stylePairs.push(`${p}:${await inlineAllResourcesInText(val)}`)
+    }
+    node.setAttribute('style', stylePairs.join(';'))
     Array.from(node.attributes).forEach(attr => {
-      const name = attr.name, lower = name.toLowerCase()
-      const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
+      const name = attr.name, lower = name.toLowerCase(), allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
+      if (name === 'style') return
       if (!allowed) { node.removeAttribute(name); return }
       if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
     })
     node.setAttribute('data-csnap', String(index))
     if (orig === picked) node.setAttribute('data-csnap-picked', 'true')
     if (['style', 'script'].includes(node.tagName.toLowerCase())) node.remove()
-  })
-
-  let css = ''
-  const allVars = getVariables(root)
-  if (allVars.size) {
-    css += ':root {\n'
-    for (const [name, val] of allVars.entries()) css += `  ${name}: ${val};\n`
-    css += '}\n\n'
   }
 
-  const defsToInclude = new Set<string>()
-  originalNodes.forEach(node => {
-    Array.from(node.attributes).forEach(attr => {
-      const m = attr.value.match(/url\(#([^)]+)\)/); if (m) defsToInclude.add(m[1])
-    })
-    const style = window.getComputedStyle(node), mProps = ['marker-start', 'marker-mid', 'marker-end', 'clip-path', 'mask']
-    mProps.forEach(p => { const m = style.getPropertyValue(p).match(/url\(#([^)]+)\)/); if (m) defsToInclude.add(m[1]) })
-  })
-
-  if (defsToInclude.size) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    svg.style.display = 'none'; const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); svg.appendChild(defs)
-    defsToInclude.forEach(id => { const o = document.getElementById(id); if (o) defs.appendChild(o.cloneNode(true)) })
-    if (defs.children.length > 0) clone.prepend(svg)
-  }
-
-  const CRITICAL = new Set(['display', 'position', 'width', 'height', 'aspect-ratio', 'color', 'font-family', 'font-size', 'font-weight', 'line-height', 'box-sizing', 'opacity', 'visibility', 'overflow', 'fill', 'stroke', 'stroke-width', 'content', 'z-index', 'transform', 'transform-origin', 'pointer-events', 'cursor', 'user-select', 'object-fit', 'vertical-align'])
-
-  for (let index = 0; index < originalNodes.length; index++) {
-    const orig = originalNodes[index]
-    if (!orig.isConnected) continue
-    const computed = window.getComputedStyle(orig), defaults = getDefaultStyles(orig.tagName)
-    const selector = `[data-csnap="${index}"]`
-    let block = `${selector} {\n`, hasProps = false
-    for (const p of STYLE_PROPS) {
-      const val = computed.getPropertyValue(p).trim()
-      if (!val) continue
-      const isC = CRITICAL.has(p) || p.includes('padding') || p.includes('margin') || p.includes('border') || p.includes('background') || p.startsWith('flex') || p.startsWith('grid') || p.startsWith('transition') || p.startsWith('animation') || p.includes('text') || p.includes('white-space')
-      if (isC || val !== defaults[p]) { block += `  ${p}: ${val};\n`; hasProps = true }
-    }
-    block += '}\n'; if (hasProps) css += block + '\n'
-    const states: (':hover' | ':focus' | ':active')[] = [':hover', ':focus', ':active']
-    for (const s of states) {
-      const decls = collectPseudoDeclarations(orig, s)
-      if (decls.size) {
-        css += `${selector}${s} {\n`
-        for (const [p, v] of decls.entries()) css += `  ${p}: ${v};\n`
-        css += '}\n\n'
-      }
-    }
-    for (const p of ["::before", "::after"] as const) {
-      const pc = window.getComputedStyle(orig, p), c = pc.getPropertyValue("content")
-      if (c && !['none', '""', "''"].includes(c)) {
-        css += `${selector}${p} {\n  content: ${c};\n`
-        for (const sp of STYLE_PROPS) { const v = pc.getPropertyValue(sp).trim(); if (v) css += `  ${sp}: ${v};\n` }
-        css += '}\n\n'
-      }
-    }
-    const anim = computed.animationName
-    if (anim && anim !== 'none') {
-      for (const n of anim.split(',').map(s => s.trim())) {
-        for (const sheet of Array.from(document.styleSheets)) {
-          try {
-            for (const r of Array.from(sheet.cssRules)) { if (r instanceof CSSKeyframesRule && r.name === n) css += r.cssText + '\n\n' }
-          } catch { continue }
-        }
-      }
-    }
-  }
-
-  const inlinedCss = await inlineAllResourcesInText(css), fontFaces = getUsedFontFaces(), scheme = getPreferredColorScheme()
-  const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
-  const bgColor = scheme === 'dark' ? '#1a1a1b' : '#fff'
-  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${bgColor};}#component-snap-root{display:contents;}`
+  const scheme = window.getComputedStyle(document.documentElement).colorScheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  const prelude = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};} html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${scheme === 'dark' ? '#1a1a1b' : '#fff'};}#component-snap-root{display:contents;}`
   
-  return {
-    html: clone.outerHTML,
-    css: `${fontFaces}\n\n${reset}\n${centering}\n\n${inlinedCss}`,
-    selectedSelector: originalNodes.findIndex((n) => n === picked) >= 0 ? `[data-csnap="${originalNodes.findIndex((n) => n === picked)}"]` : undefined,
-  }
+  return { html: clone.outerHTML, css: prelude, selectedSelector: `[data-csnap="${originalNodes.findIndex(n => n === picked)}"]` }
 }
 
 const buildComponentJs = (selector: string) => `// Component Snap Active Bootstrap
@@ -395,12 +160,9 @@ if (!root) {
   console.warn('[component-snap] root not found:', rootSelector);
 } else {
   console.log('[component-snap] Active Snapshot Mounted:', root);
-  
-  // Action Mirror Engine
   const interactive = root.querySelectorAll('button, a, input, [role="button"], piece, .piece');
   interactive.forEach(el => {
     el.addEventListener('click', (e) => {
-      console.log('[component-snap] Action Intercepted:', el.tagName, el.className);
       const ripple = document.createElement('div');
       ripple.style.cssText = 'position:fixed;width:20px;height:20px;background:rgba(59,130,246,0.4);border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);transition:all 0.4s ease-out;z-index:9999;';
       ripple.style.left = e.clientX + 'px'; ripple.style.top = e.clientY + 'px';
@@ -409,8 +171,6 @@ if (!root) {
       setTimeout(() => ripple.remove(), 500);
     });
   });
-
-  // Drag & Drop Shim
   let activeElement = null, startX = 0, startY = 0, initialTransform = '';
   const isDraggable = (el) => {
     const tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el);
@@ -459,8 +219,7 @@ const getUnderlyingElement = (x: number, y: number) => {
 
 const drawOverlay = (el: HTMLElement) => {
   const box = el.getBoundingClientRect(), node = ensureOverlay()
-  node.style.display = 'block'
-  node.style.top = `${box.top}px`; node.style.left = `${box.left}px`; node.style.width = `${box.width}px`; node.style.height = `${box.height}px`
+  node.style.display = 'block'; node.style.top = `${box.top}px`; node.style.left = `${box.left}px`; node.style.width = `${box.width}px`; node.style.height = `${box.height}px`
 }
 
 const stopInspect = () => {
@@ -485,13 +244,12 @@ const onBlockerClick = async (event: MouseEvent) => {
   const captureRoot = findVisualRoot(target)
   const rect = captureRoot.getBoundingClientRect(), selector = buildStableSelector(captureRoot)
   const portable = await sanitizeSubtree(captureRoot, target)
-  const freezeHtml = await freezeSubtree(captureRoot)
   const snap: ElementSnap = {
     title: document.title, url: window.location.href, selection: window.getSelection()?.toString().trim() ?? '',
     element: {
       tag: captureRoot.tagName.toLowerCase(), id: captureRoot.id || '', classes: Array.from(captureRoot.classList),
       text: (target.textContent || '').trim().slice(0, 300), selector, selectedSelector: portable.selectedSelector,
-      html: portable.html, css: portable.css, freezeHtml,
+      html: portable.html, css: portable.css, freezeHtml: portable.html,
       js: buildComponentJs(portable.selectedSelector || selector), kind: classifyComponent(target),
     },
   }
