@@ -150,12 +150,12 @@ const toBase64 = async (url: string): Promise<string> => {
   if (!url || url.startsWith('data:')) return url
   if (assetCache.has(url)) return assetCache.get(url)!
   try {
-    const resp = await fetch(url)
-    const blob = await resp.blob()
-    const base64 = await new Promise<string>((resolve) => {
-      const reader = new FileReader(); reader.onloadend = () => resolve(reader.result as string); reader.readAsDataURL(blob)
-    })
-    assetCache.set(url, base64); return base64
+    const response = await chrome.runtime.sendMessage({ type: 'FETCH_ASSET', url })
+    if (response?.ok && response?.data) {
+      assetCache.set(url, response.data)
+      return response.data
+    }
+    return url
   } catch { return url }
 }
 
@@ -217,7 +217,6 @@ const getDeepAllNodes = (root: Node): Node[] => {
 const deepCloneAndFlatten = (node: Node): Node => {
   const clone = node.cloneNode(false)
   if (node instanceof HTMLElement || node instanceof SVGElement) {
-    // If it has a shadow root, we flatten its contents into the standard child list
     if (node.shadowRoot) {
       for (const child of Array.from(node.shadowRoot.childNodes)) {
         clone.appendChild(deepCloneAndFlatten(child))
@@ -228,34 +227,6 @@ const deepCloneAndFlatten = (node: Node): Node => {
     clone.appendChild(deepCloneAndFlatten(child))
   }
   return clone
-}
-
-const freezeSubtree = async (root: HTMLElement) => {
-  const clone = deepCloneAndFlatten(root) as HTMLElement
-  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
-
-  for (let index = 0; index < clonedNodes.length; index++) {
-    const node = clonedNodes[index], orig = originalNodes[index]
-    if (!orig) continue
-    if (['script', 'style'].includes(node.tagName.toLowerCase())) { node.remove(); continue }
-    const computed = window.getComputedStyle(orig)
-    if (computed.display === 'none' || computed.visibility === 'hidden') { node.remove(); continue }
-    const defaults = getDefaultStyles(orig.tagName), stylePairs: string[] = []
-    for (const prop of STYLE_PROPS) {
-      const val = computed.getPropertyValue(prop).trim()
-      if (!val || val === defaults[prop]) continue
-      stylePairs.push(`${prop}:${await inlineAllResourcesInText(val)}`)
-    }
-    if (stylePairs.length) node.setAttribute('style', stylePairs.join(';'))
-    Array.from(node.attributes).forEach(attr => {
-      const name = attr.name, lower = name.toLowerCase()
-      const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
-      if (!allowed) { node.removeAttribute(name); return }
-      if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
-    })
-  }
-  return clone.outerHTML
 }
 
 const getAllUniqueVariableNames = () => {
@@ -285,6 +256,34 @@ const getVariables = (el: HTMLElement) => {
     }
   }
   return vars
+}
+
+const freezeSubtree = async (root: HTMLElement) => {
+  const clone = deepCloneAndFlatten(root) as HTMLElement
+  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
+  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
+
+  for (let index = 0; index < clonedNodes.length; index++) {
+    const node = clonedNodes[index], orig = originalNodes[index]
+    if (!orig) continue
+    if (['script', 'style'].includes(node.tagName.toLowerCase())) { node.remove(); continue }
+    const computed = window.getComputedStyle(orig)
+    if (computed.display === 'none' || computed.visibility === 'hidden') { node.remove(); continue }
+    const defaults = getDefaultStyles(orig.tagName), stylePairs: string[] = []
+    for (const prop of STYLE_PROPS) {
+      const val = computed.getPropertyValue(prop).trim()
+      if (!val || val === defaults[prop]) continue
+      stylePairs.push(`${prop}:${await inlineAllResourcesInText(val)}`)
+    }
+    if (stylePairs.length) node.setAttribute('style', stylePairs.join(';'))
+    Array.from(node.attributes).forEach(attr => {
+      const name = attr.name, lower = name.toLowerCase()
+      const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
+      if (!allowed) { node.removeAttribute(name); return }
+      if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
+    })
+  }
+  return clone.outerHTML
 }
 
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
@@ -380,7 +379,7 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   const inlinedCss = await inlineAllResourcesInText(css), fontFaces = getUsedFontFaces(), scheme = getPreferredColorScheme()
   const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
   const bgColor = scheme === 'dark' ? '#1a1a1b' : '#fff'
-  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${bgColor};}#component-snap-root{display:block;}`
+  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${bgColor};}#component-snap-root{display:contents;}`
   
   return {
     html: clone.outerHTML,

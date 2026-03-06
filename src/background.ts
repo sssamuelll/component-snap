@@ -174,6 +174,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
 
+  if (message?.type === 'FETCH_ASSET') {
+    ;(async () => {
+      try {
+        const resp = await fetch(message.url)
+        const blob = await resp.blob()
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.readAsDataURL(blob)
+        })
+        sendResponse({ ok: true, data: base64 })
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) })
+      }
+    })()
+    return true
+  }
+
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
       try {
@@ -183,10 +201,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
         const folder = await saveSnapFiles(message.payload)
         
-        // CRITICAL FIX: Clear old storage to prevent quota errors
         await chrome.storage.local.clear()
         
-        // Store metadata + folder, but keep payload for repro scripts
         await chrome.storage.local.set({ 
           lastSelection: { 
             ...message.payload, 
