@@ -32,31 +32,11 @@ type StoredPayload = {
   }
 }
 
-type DebugEvent = {
-  at: string
-  level: 'info' | 'error'
-  requestId?: string
-  event: string
-  detail?: string
-}
-
-type RuntimeMessage =
-  | { type: 'PING' }
-  | { type: 'GET_LAST_SELECTION' }
-  | { type: 'GET_DEBUG_LOGS' }
-  | { type: 'START_INSPECT_TAB'; tabId: number }
-  | { type: 'ELEMENT_SELECTED'; requestId: string; payload: StoredPayload; clipRect?: ClipRect }
-
-const activeRequests = new Map<string, number>()
-const debugLog: DebugEvent[] = []
-
 const log = (event: string, level: 'info' | 'error' = 'info', requestId?: string, detail?: string) => {
-  debugLog.unshift({ at: new Date().toISOString(), level, event, requestId, detail })
-  if (debugLog.length > 120) debugLog.length = 120
+  console.log(`[${level}] ${event} ${requestId || ''}`, detail || '')
 }
 
 const sanitize = (input: string) => input.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 const toDataUrlFromText = (text: string, mimeType: string) => {
   const encoder = new TextEncoder()
@@ -133,7 +113,7 @@ const saveSnapFiles = async (payload: StoredPayload) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Component Snap Freeze</title>
     <style>
-      html, body { margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; }
+      html, body { margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background-color: #fff; }
       #freeze-root { display: inline-block; }
     </style>
   </head>
@@ -152,112 +132,43 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   return folder
 }
 
-const startInspectWithRetry = async (tabId: number, requestId: string) => {
-  const attempts = [0, 120, 260]
-  let lastError = 'unknown'
-
-  for (let i = 0; i < attempts.length; i++) {
-    if (attempts[i] > 0) await sleep(attempts[i])
-
-    try {
-      await chrome.tabs.sendMessage(tabId, { type: 'START_INSPECT', requestId })
-      return true
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err)
-      log('start_inspect_attempt_failed', 'error', requestId, `attempt=${i + 1} ${lastError}`)
-    }
-  }
-
-  return { ok: false, error: lastError }
-}
-
-chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
-  if (message?.type === 'PING') {
-    sendResponse({ ok: true, from: 'background' })
-    return
-  }
-
-  if (message?.type === 'GET_DEBUG_LOGS') {
-    sendResponse({ ok: true, data: debugLog })
-    return
-  }
-
-  if (message?.type === 'GET_LAST_SELECTION') {
-    chrome.storage.local.get(['lastSelection'], (result) => {
-      sendResponse({ ok: true, data: result.lastSelection ?? null })
-    })
-    return true
-  }
-
-  if (message?.type === 'START_INSPECT_TAB') {
-    ;(async () => {
-      const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-      activeRequests.set(requestId, message.tabId)
-      log('start_inspect_requested', 'info', requestId, `tabId=${message.tabId}`)
-
-      const started = await startInspectWithRetry(message.tabId, requestId)
-      if (started === true) {
-        log('start_inspect_ack', 'info', requestId)
-        sendResponse({ ok: true, requestId })
-      } else {
-        activeRequests.delete(requestId)
-        log('start_inspect_failed', 'error', requestId, started.error)
-        sendResponse({ ok: false, requestId, error: started.error })
-      }
-    })()
-    return true
-  }
-
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
-      const tabId = activeRequests.get(message.requestId) ?? sender.tab?.id
-      if (!tabId) {
-        log('element_selected_rejected', 'error', message.requestId, 'no tabId')
-        sendResponse({ ok: false, error: 'No tab id for request' })
-        return
-      }
-
-      log('element_selected', 'info', message.requestId)
-
-      let payload: StoredPayload = {
-        ...message.payload,
-        requestId: message.requestId,
-        snappedAt: new Date().toISOString(),
-      }
-
-      if (message.clipRect) {
-        try {
-          const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
-          const cropped = await cropDataUrl(screenshot, message.clipRect)
-          if (cropped) {
-            payload = { ...payload, element: { ...payload.element, screenshotDataUrl: cropped } }
-            log('screenshot_captured', 'info', message.requestId)
-          }
-        } catch (err) {
-          log('screenshot_failed', 'error', message.requestId, err instanceof Error ? err.message : String(err))
-        }
-      }
-
-      let folder = ''
       try {
-        folder = await saveSnapFiles(payload)
-        log('files_saved', 'info', message.requestId, folder)
-      } catch (err) {
-        folder = 'component_snap/unsaved'
-        log('files_save_failed', 'error', message.requestId, err instanceof Error ? err.message : String(err))
-      }
+        const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
+        const cropped = await cropDataUrl(screenshot, message.clipRect)
+        if (cropped) message.payload.element.screenshotDataUrl = cropped
 
-      const finalPayload = { ...payload, snapFolder: folder }
-      chrome.storage.local.set({ lastSelection: finalPayload }, async () => {
-        activeRequests.delete(message.requestId)
+        const folder = await saveSnapFiles(message.payload)
+        
+        // CRITICAL FIX: Clear old storage to prevent quota errors
+        await chrome.storage.local.clear()
+        
+        // Store metadata + folder, but keep payload for repro scripts (optional reduction here if needed)
+        await chrome.storage.local.set({ 
+          lastSelection: { 
+            ...message.payload, 
+            snapFolder: folder, 
+            requestId: message.requestId,
+            snappedAt: new Date().toISOString()
+          } 
+        })
+
+        log('capture_done', 'info', message.requestId)
+        
         try {
-          await chrome.tabs.sendMessage(tabId, { type: 'CAPTURE_DONE', requestId: message.requestId, folder })
-          log('capture_done_ack', 'info', message.requestId)
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+          if (tab.id) await chrome.tabs.sendMessage(tab.id, { type: 'CAPTURE_DONE', requestId: message.requestId, folder })
         } catch {
           log('capture_done_no_listener', 'error', message.requestId)
         }
+        
         sendResponse({ ok: true, folder, requestId: message.requestId })
-      })
+      } catch (err) {
+        log('capture_failed', 'error', message.requestId, String(err))
+        sendResponse({ ok: false, error: String(err) })
+      }
     })()
     return true
   }
