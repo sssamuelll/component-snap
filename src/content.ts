@@ -117,7 +117,7 @@ const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', '
 const normalizeSelectorForMatch = (selectorText: string) =>
   selectorText.replace(/:hover/g, '').replace(/:focus-visible/g, '').replace(/:focus-within/g, '').replace(/:focus/g, '').replace(/:active/g, '').trim()
 
-const collectPseudoDeclarations = (el: HTMLElement, pseudo: ':hover' | ':focus' | ':active') => {
+const collectPseudoDeclarations = (el: HTMLElement | SVGElement, pseudo: ':hover' | ':focus' | ':active') => {
   const declarations = new Map<string, string>()
   for (const sheet of Array.from(document.styleSheets)) {
     try {
@@ -167,6 +167,14 @@ const inlineAllResourcesInText = async (text: string): Promise<string> => {
   return result
 }
 
+const getPreferredColorScheme = () => {
+  const html = document.documentElement;
+  const body = document.body;
+  const style = window.getComputedStyle(html);
+  const bodyStyle = window.getComputedStyle(body);
+  return style.colorScheme || bodyStyle.colorScheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+
 const findVisualRoot = (target: HTMLElement) => {
   let best = target
   const vArea = Math.max(1, window.innerWidth * window.innerHeight)
@@ -186,19 +194,27 @@ const findVisualRoot = (target: HTMLElement) => {
     const hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent'
     const hasBorder = style.borderStyle !== 'none' && style.borderWidth !== '0px'
     
-    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell')
-    const isComponent = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || tag === 'form'
-    const hasRichSiblings = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input'].includes(s.tagName.toLowerCase()))
+    // Modern apps (Reddit, Google) use specific keywords for shells
+    const isShell = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || 
+                    cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || 
+                    tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header')
+    
+    const isComponent = cls.includes('search') || cls.includes('board') || cls.includes('card') || 
+                        tag.includes('board') || cls.includes('menu') || cls.includes('bar')
+    
+    const hasRichSiblings = el.parentElement && Array.from(el.parentElement.children).some(s => 
+      ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase())
+    )
 
-    let score = (hasShadow ? 60 : 0) + (hasRadius ? 40 : 0) + (hasBg ? 10 : 0) + (hasBorder ? 10 : 0)
-    if (hasShadow && hasRadius) score += 100 // High confidence shell
+    let score = (hasShadow ? 60 : 0) + (hasRadius ? 40 : 0) + (hasBg ? 15 : 0) + (hasBorder ? 10 : 0)
+    if (hasShadow && hasRadius) score += 100 // High confidence shell marker
     
-    score += isShell ? 100 : 0
-    score += isComponent ? 50 : 0
-    score += hasRichSiblings ? 40 : 0
+    score += isShell ? 120 : 0
+    score += isComponent ? 60 : 0
+    score += hasRichSiblings ? 50 : 0
     
-    // Only penalize if it's practically the whole page
-    if (areaRatio > 0.8) score -= 200
+    // Penalize massive elements that are likely page layouts
+    if (areaRatio > 0.8) score -= 300
     return score
   }
 
@@ -206,13 +222,12 @@ const findVisualRoot = (target: HTMLElement) => {
   
   for (let depth = 0; depth < 15 && currentElement && currentElement !== document.body; depth++) {
     const score = getElementScore(currentElement)
-    console.log(`[findVisualRoot] Checking ${currentElement.tagName} depth=${depth} score=${score.toFixed(2)}`)
+    console.log(`[findVisualRoot] Checking ${currentElement.tagName}.${currentElement.className.toString().slice(0,20)} depth=${depth} score=${score.toFixed(2)}`)
     
-    // "Highest Shell" Strategy: 
-    // Threshold is 10 now.
-    if (score > 10) {
+    // If the score is high enough, this is a strong candidate for the "Shell"
+    if (score > 30) {
       best = currentElement
-      console.log(`[findVisualRoot] Potential root found: ${currentElement.tagName} (${score.toFixed(2)})`)
+      console.log(`[findVisualRoot] New potential shell: ${currentElement.tagName} (${score.toFixed(2)})`)
     }
     currentElement = currentElement.parentElement as HTMLElement
   }
@@ -269,27 +284,85 @@ const getAllUniqueVariableNames = () => {
 }
 
 const getVariables = (el: HTMLElement) => {
-  const vars = new Map<string, string>(), roots = [document.documentElement, document.body]
-  let curr: HTMLElement | null = el.parentElement
-  const ancestors = []
-  while (curr && curr !== document.body) { ancestors.unshift(curr); curr = curr.parentElement }
+  const vars = new Map<string, string>()
   const allNames = getAllUniqueVariableNames()
-  for (const r of [...roots, ...ancestors, el]) {
-    const comp = window.getComputedStyle(r)
-    for (const n of allNames) { const v = comp.getPropertyValue(n).trim(); if (v) vars.set(n, v) }
+  
+  // Collect all ancestors up to html
+  const targetRoots: HTMLElement[] = [el]
+  let curr: HTMLElement | null = el.parentElement
+  while (curr) {
+    targetRoots.unshift(curr)
+    curr = curr.parentElement
+  }
+
+  // Iterate from top to bottom so children override parents (standard CSS inheritance)
+  for (const root of targetRoots) {
+    const computed = window.getComputedStyle(root)
+    for (const name of allNames) {
+      const val = computed.getPropertyValue(name).trim()
+      if (val) vars.set(name, val)
+    }
+    // Also check for inline style variables
+    for (let i = 0; i < root.style.length; i++) {
+      const prop = root.style[i]
+      if (prop.startsWith('--')) {
+        vars.set(prop, computed.getPropertyValue(prop).trim())
+      }
+    }
   }
   return vars
 }
 
+const getDeepAllNodes = (root: Node): Node[] => {
+  const nodes: Node[] = [root];
+  if (root instanceof HTMLElement || root instanceof SVGElement) {
+    if (root.shadowRoot) {
+      nodes.push(...getDeepAllNodes(root.shadowRoot));
+    }
+    for (const child of Array.from(root.childNodes)) {
+      nodes.push(...getDeepAllNodes(child));
+    }
+  } else if (root instanceof ShadowRoot) {
+    for (const child of Array.from(root.childNodes)) {
+      nodes.push(...getDeepAllNodes(child));
+    }
+  }
+  return nodes;
+}
+
+const deepCloneNode = (node: Node): Node => {
+  const clone = node.cloneNode(false);
+  
+  if (node instanceof HTMLElement || node instanceof SVGElement) {
+    if (node.shadowRoot) {
+      const shadowClone = (clone as HTMLElement).attachShadow({ mode: node.shadowRoot.mode });
+      for (const child of Array.from(node.shadowRoot.childNodes)) {
+        shadowClone.appendChild(deepCloneNode(child));
+      }
+    }
+  }
+  
+  for (const child of Array.from(node.childNodes)) {
+    clone.appendChild(deepCloneNode(child));
+  }
+  
+  return clone;
+}
+
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
-  const clone = root.cloneNode(true) as HTMLElement
-  const originalNodes = [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]
-  const clonedNodes = [clone, ...Array.from(clone.querySelectorAll<HTMLElement>('*'))]
+  const clone = deepCloneNode(root) as HTMLElement
+  const originalNodes = getDeepAllNodes(root).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
+  
+  // To keep indexing stable for [data-csnap], we need a matching traversal for the clone
+  const clonedNodes = getDeepAllNodes(clone).filter(n => n instanceof HTMLElement || n instanceof SVGElement) as (HTMLElement | SVGElement)[]
 
   const rootBox = root.getBoundingClientRect()
   clone.style.width = `${rootBox.width}px`; clone.style.height = `${rootBox.height}px`; clone.style.position = 'relative'
 
   clonedNodes.forEach((node, index) => {
+    const orig = originalNodes[index];
+    if (!orig) return;
+
     Array.from(node.attributes).forEach(attr => {
       const name = attr.name, lower = name.toLowerCase()
       const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
@@ -297,7 +370,7 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
       if (['src', 'href', 'poster'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
     })
     node.setAttribute('data-csnap', String(index))
-    if (originalNodes[index] === picked) node.setAttribute('data-csnap-picked', 'true')
+    if (orig === picked) node.setAttribute('data-csnap-picked', 'true')
     if (['style', 'script'].includes(node.tagName.toLowerCase())) node.remove()
   })
 
@@ -376,8 +449,10 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
 
   const inlinedCss = await inlineAllResourcesInText(css)
   const fontFaces = getUsedFontFaces()
-  const reset = '*,*::before,*::after{box-sizing:border-box;}'
-  const centering = 'html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:#fff;}#component-snap-root{display:block;}'
+  const scheme = getPreferredColorScheme()
+  const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
+  const bgColor = scheme === 'dark' ? '#1a1a1b' : '#fff'
+  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${bgColor};}#component-snap-root{display:block;}`
   
   return {
     html: clone.outerHTML,
