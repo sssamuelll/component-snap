@@ -1,66 +1,56 @@
-# Component Snap
+# Component Snap (Next-Gen)
 
-Chrome Extension (Manifest V3) to capture a UI component from any webpage and export:
+An advanced Chrome Extension (Manifest V3) engineered to capture UI components from any webpage with high visual and behavioral fidelity. It transforms live DOM subtrees into portable, self-contained "Digital Twins."
 
-- screenshot (`screenshot.png`)
-- HTML/CSS/JS artifacts
-- metadata (`meta.json`)
+## 🚀 The Atomic Motion Engine
 
-## Current status
+Component Snap features a proprietary capture engine designed to bypass the limitations of traditional DOM cloning:
 
-Component Snap is functional for basic snaps, but still has an open blocker:
+- **Atomic Scoped Stylesheets:** Replaces static inline styles with dynamic, per-node CSS mappings (`[data-csnap="X"]`). This preserves the "soul" of the component, allowing original CSS transitions and animations to interpolate correctly between states.
+- **Shadow-Piercing Traversal:** Recursively navigates and flattens every `ShadowRoot` on the page, piercing encapsulation boundaries to capture hidden icons and sub-components.
+- **Global Symbol Harvester:** Scans the entire document for global SVG `<symbol>` and `<defs>` references, automatically bundling them into the snap to ensure iconography remains visible.
+- **Interactive State Capture:** Pierces through Shadow DOM to capture `:hover`, `:active`, and `:focus` states, preserving behavioral feedback.
+- **Asynchronous Base64 Inlining:** Downloads and encodes all external images, board skins, and fonts as Data URIs during capture for 100% domain independence.
 
-- **Visual fidelity mismatch** on complex/dynamic sites (e.g. Google search bar)
-- **Duplicate export structure** (`portable/` and `raw/`) when only one final export is desired
+## 🛠 Features
 
-These are tracked in the first GitHub issue.
+- **DevTools-Style Picker:** Activate a visual selector to identify the perfect component "shell" using a confidence-weighted traversal algorithm.
+- **Action Mirror Engine:** Injects a functional layer into exports that provides visual ripple feedback on interactions and logs events to the console.
+- **Dark Mode Aware:** Automatically detects the original page's color scheme and background to ensure the preview is contextually accurate.
+- **High-Fidelity Exports:** Generates single-folder bundles containing everything needed to reproduce the component in isolation.
 
-## Stack
+## 📁 Export Structure
 
-- React + Vite + TypeScript
-- `@crxjs/vite-plugin` (Chrome extension build)
-- Playwright (E2E)
-- Vitest (unit)
-
-## Project scripts
-
-```bash
-npm install
-npm run build
-npm run test
-npm run test:e2e
-```
-
-## Load extension locally
-
-1. Build:
-   ```bash
-   npm run build
-   ```
-2. Open `chrome://extensions`
-3. Enable **Developer mode**
-4. Click **Load unpacked** and select `dist/`
-
-## Current export behavior
-
-Each snap writes to:
+Each snap is exported directly to your Downloads folder:
 
 ```text
 Downloads/component_snap/<timestamp>_<tag>/
+├── component.html   # Interactive preview with Atomic Styles
+├── component.css    # Scoped stylesheet + Keyframes + Variables
+├── component.js     # Interaction shim (Drag & Drop + Action Mirror)
+├── snapshot.html    # Static, CSS-frozen version
+├── screenshot.png   # Original rendered source of truth
+└── meta.json        # Capture metadata & structural info
 ```
 
-With artifacts currently including:
+## 🧱 Technical Blockers (The Fidelity Wall)
 
-- `portable/component.html`
-- `portable/component.css`
-- `portable/component.js`
-- `portable/snapshot.html`
-- `raw/component.html`
-- `raw/component.css`
-- `raw/component.js`
-- `screenshot.png`
-- `meta.json`
+Despite its advanced engine, Component Snap is currently hitting fundamental limitations of the web platform:
+- **JavaScript Brain Loss:** We capture the *state* but not the *logic*. React/Vue internal state changes cannot be reversed without original source code.
+- **User Agent Leak:** Browser defaults can still interfere with computed styles.
+- **Asset Isolation:** Highly secured assets (CORS/Hotlinking) may occasionally fail Base64 conversion.
 
-## Goal
+Refer to **[Issue #2](https://github.com/sssamuelll/component-snap/issues/2)** for the full technical failure report.
 
-Produce exports that look **exactly** like the original rendered component and avoid redundant artifact duplication unless explicitly requested.
+## 🏗 Stack
+
+- **Frontend:** React + Vite + TypeScript
+- **Build:** `@crxjs/vite-plugin`
+- **Testing:** Playwright (E2E) & Vitest (Unit)
+
+## 🚦 Getting Started
+
+1. **Install Dependencies:** `npm install`
+2. **Build Extension:** `npm run build`
+3. **Load in Chrome:** Open `chrome://extensions`, enable **Developer mode**, and select the `dist/` folder.
+4. **Run Verification:** `npm run test` or use specialized repro scripts like `npx tsx repro_reddit.ts`.
