@@ -96,7 +96,47 @@ const findVisualRoot = (target: HTMLElement) => {
   return best
 }
 
-// CRITICAL FIX: Unified traversal for Original and Clone
+const getAllStyleSheetsRecursive = (root: Document | ShadowRoot = document): CSSStyleSheet[] => {
+  const sheets: CSSStyleSheet[] = Array.from(root.styleSheets)
+  const allNodes = Array.from(root.querySelectorAll('*'))
+  for (const node of allNodes) {
+    if (node.shadowRoot) sheets.push(...getAllStyleSheetsRecursive(node.shadowRoot))
+  }
+  return sheets
+}
+
+const normalizeSelectorForMatch = (selectorText: string) =>
+  selectorText.replace(/:hover/g, '').replace(/:focus-visible/g, '').replace(/:focus-within/g, '').replace(/:focus/g, '').replace(/:active/g, '').trim()
+
+const collectPseudoDeclarations = (el: HTMLElement | SVGElement, pseudo: ':hover' | ':focus' | ':active') => {
+  const declarations = new Map<string, string>()
+  const allSheets = getAllStyleSheetsRecursive()
+  for (const sheet of allSheets) {
+    try {
+      const rules = sheet.cssRules
+      for (const rule of Array.from(rules)) {
+        if (!(rule instanceof CSSStyleRule) || !rule.selectorText.includes(pseudo)) continue
+        for (const sel of rule.selectorText.split(',').map(s => s.trim())) {
+          if (!sel.includes(pseudo)) continue
+          const norm = normalizeSelectorForMatch(sel)
+          if (norm) {
+            try {
+              if (el.matches(norm)) {
+                for (let i = 0; i < rule.style.length; i++) {
+                  const p = rule.style[i]
+                  const val = rule.style.getPropertyValue(p).trim()
+                  if (val) declarations.set(p, val)
+                }
+              }
+            } catch { continue }
+          }
+        }
+      }
+    } catch { continue }
+  }
+  return declarations
+}
+
 const walkUnified = (node: Node, cb: (n: HTMLElement | SVGElement) => void) => {
   if (node instanceof HTMLElement || node instanceof SVGElement) {
     cb(node)
@@ -118,15 +158,72 @@ const deepCloneAndFlatten = (node: Node): Node => {
   return clone
 }
 
+const getAllUniqueVariableNames = () => {
+  const names = new Set<string>()
+  const allSheets = getAllStyleSheetsRecursive()
+  for (const sheet of allSheets) {
+    try {
+      for (const rule of Array.from(sheet.cssRules)) {
+        if (rule instanceof CSSStyleRule) {
+          const text = rule.style.cssText, matches = text.match(/--[a-zA-Z0-9_-]+/g)
+          if (matches) matches.forEach(n => names.add(n))
+        }
+      }
+    } catch { continue }
+  }
+  return Array.from(names)
+}
+
+const getVariables = (el: HTMLElement) => {
+  const vars = new Map<string, string>(), allNames = getAllUniqueVariableNames()
+  const targetRoots: HTMLElement[] = [el]; let curr: HTMLElement | null = el.parentElement
+  while (curr) { targetRoots.unshift(curr); curr = curr.parentElement }
+  for (const root of targetRoots) {
+    const computed = window.getComputedStyle(root)
+    for (const name of allNames) { const val = computed.getPropertyValue(name).trim(); if (val) vars.set(name, val) }
+    for (let i = 0; i < root.style.length; i++) {
+      const prop = root.style[i]; if (prop.startsWith('--')) vars.set(prop, computed.getPropertyValue(prop).trim())
+    }
+  }
+  return vars
+}
+
+const getUsedFontFaces = () => {
+  const fontFaces: string[] = []
+  const allSheets = getAllStyleSheetsRecursive()
+  for (const sheet of allSheets) {
+    try {
+      for (const rule of Array.from(sheet.cssRules)) {
+        if (rule instanceof CSSFontFaceRule) fontFaces.push(rule.cssText)
+      }
+    } catch { continue }
+  }
+  return fontFaces.join('\n\n')
+}
+
+const defaultStylesCache = new Map<string, Record<string, string>>()
+
+const getDefaultStyles = (tagName: string): Record<string, string> => {
+  const key = tagName.toLowerCase(); if (defaultStylesCache.has(key)) return defaultStylesCache.get(key)!
+  const iframe = document.createElement('iframe'); Object.assign(iframe.style, { visibility: 'hidden', width: '0', height: '0', position: 'absolute' }); document.body.appendChild(iframe)
+  const doc = iframe.contentDocument || iframe.contentWindow?.document, styles: Record<string, string> = {}
+  if (doc) {
+    let targetParent: HTMLElement = doc.body
+    if (key === 'li') { const ul = doc.createElement('ul'); doc.body.appendChild(ul); targetParent = ul }
+    else if (['td', 'th', 'tr'].includes(key)) { const table = doc.createElement('table'), tbody = doc.createElement('tbody'); table.appendChild(tbody); doc.body.appendChild(table); targetParent = (key === 'tr') ? tbody : doc.createElement('tr'); if (key !== 'tr') tbody.appendChild(targetParent) }
+    const temp = doc.createElement(tagName); targetParent.appendChild(temp)
+    const computed = iframe.contentWindow!.getComputedStyle(temp)
+    for (const prop of STYLE_PROPS) { styles[prop] = computed.getPropertyValue(prop) }
+  }
+  document.body.removeChild(iframe); defaultStylesCache.set(key, styles); return styles
+}
+
 const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   const clone = deepCloneAndFlatten(root) as HTMLElement
-  
-  // Synchronized mapping
   const originalNodes: (HTMLElement | SVGElement)[] = []
   walkUnified(root, (n) => originalNodes.push(n))
   
   const clonedNodes: (HTMLElement | SVGElement)[] = []
-  // Clone is already flattened, so a standard walk is fine and will match the unified walk order
   const walkClone = (n: Node) => {
     if (n instanceof HTMLElement || n instanceof SVGElement) {
       clonedNodes.push(n)
@@ -138,7 +235,6 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   const rootBox = root.getBoundingClientRect()
   clone.style.width = `${rootBox.width}px`; clone.style.height = `${rootBox.height}px`; clone.style.position = 'relative'
 
-  // Symbol Harvester: Find global symbols referenced by component
   const referencedIds = new Set<string>()
   originalNodes.forEach(node => {
     Array.from(node.attributes).forEach(attr => {
@@ -157,22 +253,78 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
     if (symbolDictionary.children.length > 0) clone.prepend(symbolDictionary)
   }
 
-  // Atomic Style Freezing
+  let css = ''
+  const allVars = getVariables(root)
+  if (allVars.size) {
+    css += ':root {\n'
+    for (const [name, val] of allVars.entries()) css += `  ${name}: ${await inlineResources(val)};\n`
+    css += '}\n\n'
+  }
+
+  const CRITICAL = new Set(['display', 'position', 'width', 'height', 'aspect-ratio', 'color', 'font-family', 'font-size', 'font-weight', 'line-height', 'box-sizing', 'opacity', 'visibility', 'overflow', 'fill', 'stroke', 'stroke-width', 'content', 'z-index', 'transform', 'transform-origin', 'pointer-events', 'cursor', 'user-select', 'object-fit', 'vertical-align'])
+
+  // MOTION FIDELITY: Scoped Atomic Stylesheet logic
   for (let index = 0; index < clonedNodes.length; index++) {
     const node = clonedNodes[index], orig = originalNodes[index]
     if (!orig) continue
     
     const comp = window.getComputedStyle(orig)
-    const stylePairs: string[] = []
+    const defaults = getDefaultStyles(orig.tagName)
+    const selector = `[data-csnap="${index}"]`
+    let block = `${selector} {\n`, hasProps = false
+
     for (const p of STYLE_PROPS) {
       const val = comp.getPropertyValue(p).trim()
-      if (val) stylePairs.push(`${p}:${await inlineResources(val)}`)
+      if (!val) continue
+      if (CRITICAL.has(p) || val !== defaults[p] || p.includes('padding') || p.includes('margin') || p.includes('border') || p.includes('background') || p.startsWith('flex') || p.startsWith('grid') || p.startsWith('transition') || p.startsWith('animation') || p.includes('text') || p.includes('white-space')) {
+        const inlined = await inlineResources(val)
+        block += `  ${p}: ${inlined};\n`
+        hasProps = true
+      }
     }
-    node.setAttribute('style', stylePairs.join(';'))
+    block += '}\n'
+    if (hasProps) css += block + '\n'
 
+    // Capture states for motion
+    const states: (':hover' | ':focus' | ':active')[] = [':hover', ':focus', ':active']
+    for (const s of states) {
+      const decls = collectPseudoDeclarations(orig, s)
+      if (decls.size) {
+        let stateBlock = `${selector}${s} {\n`
+        for (const [p, v] of decls.entries()) {
+          stateBlock += `  ${p}: ${await inlineResources(v)};\n`
+        }
+        stateBlock += '}\n\n'
+        css += stateBlock
+      }
+    }
+
+    // Capture pseudo-elements
+    for (const p of ["::before", "::after"] as const) {
+      const pc = window.getComputedStyle(orig, p), c = pc.getPropertyValue("content")
+      if (c && !['none', '""', "''"].includes(c)) {
+        css += `${selector}${p} {\n  content: ${c};\n`
+        for (const sp of STYLE_PROPS) { const v = pc.getPropertyValue(sp).trim(); if (v) css += `  ${sp}: ${v};\n` }
+        css += '}\n\n'
+      }
+    }
+
+    // Capture keyframes
+    const anim = comp.animationName
+    if (anim && anim !== 'none') {
+      for (const n of anim.split(',').map(s => s.trim())) {
+        const allSheets = getAllStyleSheetsRecursive()
+        for (const sheet of allSheets) {
+          try {
+            for (const r of Array.from(sheet.cssRules)) { if (r instanceof CSSKeyframesRule && r.name === n) css += r.cssText + '\n\n' }
+          } catch { continue }
+        }
+      }
+    }
+
+    // Attributes
     Array.from(node.attributes).forEach(attr => {
       const name = attr.name, lower = name.toLowerCase()
-      if (name === 'style') return
       const allowed = ALLOWED_ATTRS.has(name) || ALLOWED_ATTRS.has(lower) || lower.startsWith('aria-')
       if (!allowed) { node.removeAttribute(name); return }
       if (['src', 'href', 'poster', 'xlink:href'].includes(lower)) node.setAttribute(name, resolveUrl(attr.value))
@@ -184,9 +336,11 @@ const sanitizeSubtree = async (root: HTMLElement, picked: HTMLElement) => {
   }
 
   const scheme = window.getComputedStyle(document.documentElement).colorScheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  const prelude = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};} html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${scheme === 'dark' ? '#1a1a1b' : '#fff'};}#component-snap-root{display:contents;}`
+  const fontFaces = getUsedFontFaces()
+  const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
+  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${scheme === 'dark' ? '#1a1a1b' : '#fff'};}#component-snap-root{display:contents;}`
   
-  return { html: clone.outerHTML, css: prelude, selectedSelector: `[data-csnap="${originalNodes.findIndex(n => n === picked)}"]` }
+  return { html: clone.outerHTML, css: `${fontFaces}\n\n${reset}\n${centering}\n\n${css}`, selectedSelector: `[data-csnap="${originalNodes.findIndex(n => n === picked)}"]` }
 }
 
 const buildComponentJs = (selector: string) => `// Component Snap Active Bootstrap
