@@ -62,10 +62,51 @@ export interface CaptureBundleV0 {
     canvasPresent?: boolean
     webglPresent?: boolean
   }
+  shadowTopology?: ShadowTopologyV0
   nodeMapping?: NodeMappingResult
   cssGraph?: MatchedStyleGraphV0
   debug?: {
     warnings: string[]
+  }
+}
+
+export interface ShadowTopologySheetV0 {
+  index: number
+  href?: string
+  disabled?: boolean
+  mediaText?: string
+  title?: string
+  ruleCount?: number
+  constructed?: boolean
+}
+
+export interface ShadowTopologyHostV0 {
+  nodeId?: number
+  backendNodeId?: number
+  nodeName?: string
+  tagName?: string
+  id?: string
+  classList?: string[]
+}
+
+export interface ShadowTopologyRootV0 {
+  mode: 'open' | 'closed' | 'unknown'
+  depth: number
+  host?: ShadowTopologyHostV0
+  adoptedStyleSheets?: ShadowTopologySheetV0[]
+}
+
+export interface ShadowTopologyV0 {
+  roots: ShadowTopologyRootV0[]
+  diagnostics?: {
+    totalShadowRoots?: number
+    openShadowRootCount?: number
+    closedShadowRootCount?: number
+    unknownShadowRootCount?: number
+    maxShadowDepth?: number
+    adoptedStyleSheetRootCount?: number
+    adoptedStyleSheetCount?: number
+    warnings?: string[]
   }
 }
 

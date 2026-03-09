@@ -4,6 +4,7 @@ import { captureDomSnapshot } from './domSnapshotCapture'
 import { mapTargetToCDPNode } from './nodeMapping'
 import { captureScreenshots } from './pageCapture'
 import { captureRuntimeEnvironment } from './runtimeCapture'
+import { captureShadowTopology } from './shadowTopology'
 import type { CaptureBundleV0, CaptureSeed } from './types'
 
 const createCaptureId = () => `cdp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -19,6 +20,9 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     const runtime = await captureRuntimeEnvironment(client)
     const screenshot = await captureScreenshots(client, seed.boundingBox)
     const domSnapshot = await captureDomSnapshot(client)
+    const shadowTopologyCapture = await captureShadowTopology(client)
+    const shadowTopology = shadowTopologyCapture.shadowTopology
+    warnings.push(...shadowTopologyCapture.warnings.map((warning) => `shadow_topology: ${warning}`))
     const nodeMapping = await mapTargetToCDPNode(client, seed, domSnapshot.raw).catch((error) => {
       warnings.push(`node_mapping_failed: ${String(error)}`)
       return undefined
@@ -57,6 +61,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       screenshot,
       domSnapshot,
       runtimeHints: runtime.runtimeHints,
+      shadowTopology,
       nodeMapping,
       cssGraph,
       debug: { warnings },

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
   const captureScreenshots = vi.fn()
   const captureDomSnapshot = vi.fn()
   const captureCSSProvenanceGraph = vi.fn()
+  const captureShadowTopology = vi.fn()
   return {
     attach,
     detach,
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => {
     captureScreenshots,
     captureDomSnapshot,
     captureCSSProvenanceGraph,
+    captureShadowTopology,
   }
 })
 
@@ -48,6 +50,10 @@ vi.mock('./domSnapshotCapture', () => ({
 
 vi.mock('./cssCapture', () => ({
   captureCSSProvenanceGraph: mocks.captureCSSProvenanceGraph,
+}))
+
+vi.mock('./shadowTopology', () => ({
+  captureShadowTopology: mocks.captureShadowTopology,
 }))
 
 import { runCDPCapture } from './orchestrator'
@@ -91,6 +97,11 @@ describe('runCDPCapture css integration', () => {
       raw: { documents: [] },
       stats: { documents: 0, nodes: 0 },
     })
+
+    mocks.captureShadowTopology.mockResolvedValue({
+      shadowTopology: { roots: [], diagnostics: { totalShadowRoots: 0 } },
+      warnings: [],
+    })
   })
 
   it('attaches cssGraph when node mapping resolves a nodeId', async () => {
@@ -116,6 +127,7 @@ describe('runCDPCapture css integration', () => {
       selector: '.target',
     })
     expect(bundle.cssGraph?.target.nodeId).toBe(44)
+    expect(bundle.shadowTopology?.diagnostics?.totalShadowRoots).toBe(0)
   })
 
   it('fails soft with warning when node mapping is unresolved', async () => {
@@ -130,5 +142,25 @@ describe('runCDPCapture css integration', () => {
     expect(mocks.captureCSSProvenanceGraph).not.toHaveBeenCalled()
     expect(bundle.cssGraph).toBeUndefined()
     expect((bundle.debug?.warnings || []).join(' ')).toContain('css_capture_skipped: node-unresolved')
+  })
+
+  it('passes through shadow topology warnings as debug warnings', async () => {
+    mocks.mapTargetToCDPNode.mockResolvedValue({
+      resolved: false,
+      confidence: 0.1,
+      strategy: 'unresolved',
+      evidence: ['none'],
+    })
+    mocks.captureShadowTopology.mockResolvedValue({
+      shadowTopology: {
+        roots: [{ mode: 'closed', depth: 1, host: { nodeName: 'APP-SHELL', tagName: 'app-shell' } }],
+        diagnostics: { totalShadowRoots: 1, closedShadowRootCount: 1 },
+      },
+      warnings: ['closed-shadow-root-unavailable'],
+    })
+
+    const bundle = await runCDPCapture(createSeed())
+    expect(bundle.shadowTopology?.diagnostics?.closedShadowRootCount).toBe(1)
+    expect((bundle.debug?.warnings || []).join(' ')).toContain('shadow_topology: closed-shadow-root-unavailable')
   })
 })
