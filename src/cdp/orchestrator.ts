@@ -4,7 +4,9 @@ import { captureDomSnapshot } from './domSnapshotCapture'
 import { mapTargetToCDPNode } from './nodeMapping'
 import { captureScreenshots } from './pageCapture'
 import { buildActionTraceTimelineEvents } from './actionTraceTimeline'
+import { buildMutationTraceTimelineEvents } from './mutationTraceTimeline'
 import { buildReplayCapsule } from './replayCapsule'
+import { mergeReplayTimelineEvents } from './replayTimeline'
 import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
@@ -54,6 +56,8 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     })
     const resourceGraph = resourceGraphCapture.resourceGraph
     warnings.push(...resourceGraphCapture.warnings.map((warning) => `resource_graph: ${warning}`))
+    const actionTimelineEvents = buildActionTraceTimelineEvents(seed.actionTraceEvents)
+    const mutationTimelineEvents = buildMutationTraceTimelineEvents(seed.mutationTraceEvents)
     const replayCapsuleCapture = buildReplayCapsule({
       createdAt,
       page: {
@@ -72,7 +76,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       cssGraph,
       shadowTopology,
       resourceGraph,
-      timelineEvents: buildActionTraceTimelineEvents(seed.actionTraceEvents),
+      timelineEvents: mergeReplayTimelineEvents(actionTimelineEvents, mutationTimelineEvents),
     })
     const replayCapsule = replayCapsuleCapture.replayCapsule
     warnings.push(...replayCapsuleCapture.warnings.map((warning) => `replay_capsule: ${warning}`))

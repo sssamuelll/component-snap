@@ -226,6 +226,56 @@ describe('runCDPCapture css integration', () => {
     )
   })
 
+  it('merges action and mutation traces into replay capsule timeline input', async () => {
+    mocks.mapTargetToCDPNode.mockResolvedValue({
+      resolved: false,
+      confidence: 0.1,
+      strategy: 'unresolved',
+      evidence: ['none'],
+    })
+
+    await runCDPCapture(
+      createSeed({
+        actionTraceEvents: [{ type: 'input', atMs: 12.2, selector: 'input.email', tagName: 'input', value: 's' }],
+        mutationTraceEvents: [
+          {
+            type: 'attributes',
+            atMs: 12.6,
+            selector: 'input.email',
+            tagName: 'input',
+            attributeName: 'value',
+            valuePreview: 's',
+            actionRef: { type: 'input', atMs: 12.2 },
+          },
+        ],
+      }),
+    )
+
+    expect(mocks.buildReplayCapsule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timelineEvents: [
+          expect.objectContaining({
+            kind: 'action-trace',
+            atMs: 12,
+            action: expect.objectContaining({ type: 'input', atMs: 12 }),
+          }),
+          expect.objectContaining({
+            kind: 'mutation',
+            atMs: 13,
+            mutation: expect.objectContaining({
+              type: 'attributes',
+              atMs: 13,
+              attributeName: 'value',
+            }),
+            payload: expect.objectContaining({
+              transition: 'input-sync',
+            }),
+          }),
+        ],
+      }),
+    )
+  })
+
   it('fails soft with warning when node mapping is unresolved', async () => {
     mocks.mapTargetToCDPNode.mockResolvedValue({
       resolved: false,

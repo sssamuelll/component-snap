@@ -1,5 +1,5 @@
 import { buildStableSelector, classifyComponent } from './core/snap'
-import type { ActionTraceEventV0 } from './cdp/types'
+import type { ActionTraceEventTypeV0, ActionTraceEventV0, MutationTraceActionRefV0, MutationTraceEventV0 } from './cdp/types'
 
 type ContentMessage =
   | { type: 'GET_SELECTION' }
@@ -46,11 +46,17 @@ type ElementSnap = {
 let isInspecting = false, isProcessing = false, currentRequestId: string | null = null
 let overlay: HTMLDivElement | null = null, blocker: HTMLDivElement | null = null
 const MAX_ACTION_TRACE_EVENTS = 180
+const MAX_MUTATION_TRACE_EVENTS = 240
 const HOVER_SAMPLE_INTERVAL_MS = 120
+const MUTATION_CORRELATION_WINDOW_MS = 1400
+const MAX_MUTATION_TAG_NAMES = 8
 let actionTraceStartAt = 0
 let actionTraceEvents: ActionTraceEventV0[] = []
+let mutationTraceEvents: MutationTraceEventV0[] = []
 let lastHoverSignature = ''
 let lastHoverAtMs = -Infinity
+let lastCorrelatedActionRef: MutationTraceActionRefV0 | null = null
+let mutationObserver: MutationObserver | null = null
 
 const STYLE_PROPS = [
   'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 
@@ -85,6 +91,23 @@ const STYLE_PROPS = [
 
 const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio', 'xlink:href', 'href'])
 const ATTRIBUTE_HINT_NAMES = new Set(['id', 'role', 'type', 'name', 'placeholder', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-selected', 'aria-checked', 'alt', 'title', 'href', 'src', 'data-testid', 'data-test'])
+const TRACEABLE_MUTATION_ATTRS = new Set([
+  'class',
+  'style',
+  'value',
+  'checked',
+  'selected',
+  'disabled',
+  'hidden',
+  'open',
+  'role',
+  'aria-expanded',
+  'aria-selected',
+  'aria-checked',
+  'aria-hidden',
+  'aria-busy',
+  'data-state',
+])
 
 const resolveUrl = (url: string) => {
   if (!url || url.startsWith('data:') || url.startsWith('http') || url.startsWith('//') || url.startsWith('#')) return url
@@ -402,6 +425,7 @@ if (!root) {
 
 const toCompactText = (value: string) => value.replace(/\s+/g, ' ').trim()
 const toActionTextPreview = (value: string) => toCompactText(value).slice(0, 160)
+const toMutationTextPreview = (value: string) => toCompactText(value).slice(0, 140)
 
 const getSiblingIndex = (el: HTMLElement) => {
   const parent = el.parentElement
@@ -508,6 +532,19 @@ const pushActionTrace = (event: ActionTraceEventV0) => {
   }
 }
 
+const pushMutationTrace = (event: MutationTraceEventV0) => {
+  if (!isInspecting) return
+  mutationTraceEvents.push(event)
+  if (mutationTraceEvents.length > MAX_MUTATION_TRACE_EVENTS) {
+    mutationTraceEvents = mutationTraceEvents.slice(mutationTraceEvents.length - MAX_MUTATION_TRACE_EVENTS)
+  }
+}
+
+const updateLastCorrelatedAction = (type: ActionTraceEventTypeV0, atMs: number) => {
+  if (type === 'hover') return
+  lastCorrelatedActionRef = { type, atMs }
+}
+
 const recordActionFromElement = (
   type: ActionTraceEventV0['type'],
   el: HTMLElement | null,
@@ -526,6 +563,122 @@ const recordActionFromElement = (
   if (extra?.code) event.code = extra.code
   if (typeof extra?.value === 'string') event.value = extra.value
   pushActionTrace(event)
+  updateLastCorrelatedAction(type, event.atMs)
+}
+
+const isInternalSnapNode = (el: Element) =>
+  el.id === '__component_snap_overlay__' ||
+  el.id === '__component_snap_blocker__' ||
+  !!el.closest('#__component_snap_overlay__') ||
+  !!el.closest('#__component_snap_blocker__')
+
+const getMutationTargetElement = (node: Node | null): HTMLElement | null => {
+  if (node instanceof HTMLElement) return node
+  if (node instanceof SVGElement) return node.parentElement
+  return node?.parentElement instanceof HTMLElement ? node.parentElement : null
+}
+
+const getTagNameFromNode = (node: Node) => {
+  if (node instanceof HTMLElement || node instanceof SVGElement) return node.tagName.toLowerCase()
+  if (node.nodeType === Node.TEXT_NODE) return '#text'
+  return '#node'
+}
+
+const pickMutationTagNames = (nodes: NodeList) => {
+  const tags = Array.from(nodes)
+    .slice(0, MAX_MUTATION_TAG_NAMES)
+    .map(getTagNameFromNode)
+  return tags.length ? tags : undefined
+}
+
+const isTraceableMutationAttribute = (name?: string | null) => {
+  if (!name) return false
+  const lower = name.toLowerCase()
+  if (TRACEABLE_MUTATION_ATTRS.has(lower)) return true
+  if (lower.startsWith('aria-')) return true
+  if (lower.startsWith('data-state')) return true
+  return false
+}
+
+const getCorrelatedActionRef = (atMs: number) => {
+  if (!lastCorrelatedActionRef) return undefined
+  if (atMs - lastCorrelatedActionRef.atMs > MUTATION_CORRELATION_WINDOW_MS) return undefined
+  return lastCorrelatedActionRef
+}
+
+const recordMutationFromObserver = (mutation: MutationRecord) => {
+  const atMs = actionAtMs()
+  const target = getMutationTargetElement(mutation.target)
+  if (!target || isInternalSnapNode(target)) return
+  const selector = buildStableSelector(target)
+  const tagName = target.tagName.toLowerCase()
+  const actionRef = getCorrelatedActionRef(atMs)
+
+  if (mutation.type === 'attributes') {
+    const attributeName = mutation.attributeName?.toLowerCase()
+    if (!isTraceableMutationAttribute(attributeName)) return
+    const nextValue = attributeName ? target.getAttribute(attributeName) : null
+    pushMutationTrace({
+      type: 'attributes',
+      atMs,
+      selector,
+      tagName,
+      attributeName: attributeName || undefined,
+      valuePreview: typeof nextValue === 'string' ? toMutationTextPreview(nextValue) : undefined,
+      actionRef,
+    })
+    return
+  }
+
+  if (mutation.type === 'characterData') {
+    const valuePreview = toMutationTextPreview(mutation.target.textContent || '')
+    if (!valuePreview) return
+    pushMutationTrace({
+      type: 'characterData',
+      atMs,
+      selector,
+      tagName,
+      valuePreview,
+      actionRef,
+    })
+    return
+  }
+
+  if (mutation.type === 'childList') {
+    if (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0) return
+    pushMutationTrace({
+      type: 'childList',
+      atMs,
+      selector,
+      tagName,
+      addedNodes: mutation.addedNodes.length,
+      removedNodes: mutation.removedNodes.length,
+      addedTagNames: pickMutationTagNames(mutation.addedNodes),
+      removedTagNames: pickMutationTagNames(mutation.removedNodes),
+      actionRef,
+    })
+  }
+}
+
+const startMutationObserver = () => {
+  if (mutationObserver) return
+  mutationObserver = new MutationObserver((mutations) => {
+    if (!isInspecting || isProcessing) return
+    for (const mutation of mutations) recordMutationFromObserver(mutation)
+  })
+  mutationObserver.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeOldValue: false,
+    characterData: true,
+    characterDataOldValue: false,
+  })
+}
+
+const stopMutationObserver = () => {
+  mutationObserver?.disconnect()
+  mutationObserver = null
 }
 
 const getUnderlyingElement = (x: number, y: number) => {
@@ -547,6 +700,7 @@ const stopInspect = () => {
   }
   window.removeEventListener('input', onGlobalInput, true)
   window.removeEventListener('focusin', onGlobalFocusIn, true)
+  stopMutationObserver()
   if (overlay) overlay.style.display = 'none'
   if (blocker) blocker.remove(); blocker = null
   window.removeEventListener('keydown', onKeyDown, true)
@@ -594,6 +748,7 @@ const onBlockerClick = async (event: MouseEvent) => {
       requestId: currentRequestId,
       payload: snap,
       actionTraceEvents,
+      mutationTraceEvents,
       clipRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 },
     },
     () => stopInspect(),
@@ -639,8 +794,11 @@ const startInspect = (requestId: string) => {
   isInspecting = true; isProcessing = false; currentRequestId = requestId
   actionTraceStartAt = performance.now()
   actionTraceEvents = []
+  mutationTraceEvents = []
   lastHoverSignature = ''
   lastHoverAtMs = -Infinity
+  lastCorrelatedActionRef = null
+  startMutationObserver()
   const b = ensureBlocker()
   b.addEventListener('mousemove', onBlockerMouseMove, true)
   b.addEventListener('click', onBlockerClickCapture, true)

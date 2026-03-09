@@ -1,5 +1,5 @@
 import { runCDPCapture } from './cdp/orchestrator'
-import type { ActionTraceEventV0, CaptureSeed } from './cdp/types'
+import type { ActionTraceEventV0, CaptureSeed, MutationTraceEventV0 } from './cdp/types'
 import type { TargetFingerprint } from './cdp/nodeMappingTypes'
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -102,6 +102,7 @@ const buildCaptureSeed = (
   payload: StoredPayload,
   clipRect?: ClipRect,
   actionTraceEvents?: ActionTraceEventV0[],
+  mutationTraceEvents?: MutationTraceEventV0[],
 ): CaptureSeed => ({
   requestId,
   tabId,
@@ -119,6 +120,7 @@ const buildCaptureSeed = (
   },
   targetFingerprint: payload.element?.targetFingerprint,
   actionTraceEvents,
+  mutationTraceEvents,
 })
 
 const saveSnapFiles = async (payload: StoredPayload) => {
@@ -236,7 +238,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (tabId) {
           try {
             cdpCapture = await runCDPCapture(
-              buildCaptureSeed(message.requestId, tabId, message.payload, message.clipRect, message.actionTraceEvents),
+              buildCaptureSeed(
+                message.requestId,
+                tabId,
+                message.payload,
+                message.clipRect,
+                message.actionTraceEvents,
+                message.mutationTraceEvents,
+              ),
             )
             log('cdp_capture_done', 'info', message.requestId)
           } catch (error) {

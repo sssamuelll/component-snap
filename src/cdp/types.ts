@@ -26,6 +26,7 @@ export interface CaptureSeed {
   }
   targetFingerprint?: TargetFingerprint
   actionTraceEvents?: ActionTraceEventV0[]
+  mutationTraceEvents?: MutationTraceEventV0[]
 }
 
 export interface CaptureBundleV0 {
@@ -86,6 +87,27 @@ export interface ActionTraceEventV0 {
   value?: string
 }
 
+export type MutationTraceTypeV0 = 'attributes' | 'childList' | 'characterData'
+
+export interface MutationTraceActionRefV0 {
+  type: ActionTraceEventTypeV0
+  atMs: number
+}
+
+export interface MutationTraceEventV0 {
+  type: MutationTraceTypeV0
+  atMs: number
+  selector?: string
+  tagName?: string
+  attributeName?: string
+  addedNodes?: number
+  removedNodes?: number
+  addedTagNames?: string[]
+  removedTagNames?: string[]
+  valuePreview?: string
+  actionRef?: MutationTraceActionRefV0
+}
+
 export type ReplayTimelineEventKindV0 = 'action-trace' | 'mutation'
 
 export interface ReplayActionTraceTimelineEventV0 {
@@ -100,6 +122,7 @@ export interface ReplayActionTraceTimelineEventV0 {
 export interface ReplayMutationTimelineEventV0 {
   kind: 'mutation'
   atMs: number
+  mutation: MutationTraceEventV0
   targetNodeId?: number
   label?: string
   payload?: Record<string, unknown>
