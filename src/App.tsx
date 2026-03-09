@@ -8,6 +8,13 @@ type SnapData = {
   url: string
   selection: string
   snapFolder?: string
+  exportMode?: string
+  exportTier?: string
+  exportDiagnostics?: {
+    warnings?: string[]
+    confidencePenalty?: number
+    confidence?: number
+  }
   cdpCapture?: CaptureBundleV0
   element?: {
     tag: string
@@ -17,6 +24,12 @@ type SnapData = {
     selector: string
     kind?: string
     screenshotDataUrl?: string
+    portableFallback?: {
+      tier: 'portable-fallback'
+      confidence: number
+      confidencePenalty: number
+      warnings: string[]
+    }
   }
 }
 
@@ -121,6 +134,17 @@ function App() {
               <li>
                 <strong>kind:</strong> {snap.element.kind || 'unknown'}
               </li>
+              {snap.element.portableFallback && (
+                <>
+                  <li>
+                    <strong>portable tier:</strong> {snap.element.portableFallback.tier} (lower-tier fallback)
+                  </li>
+                  <li>
+                    <strong>portable confidence:</strong> {snap.element.portableFallback.confidence.toFixed(2)} (penalty{' '}
+                    {snap.element.portableFallback.confidencePenalty.toFixed(2)})
+                  </li>
+                </>
+              )}
             </ul>
           )}
 

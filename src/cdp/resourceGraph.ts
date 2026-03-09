@@ -127,7 +127,7 @@ const extractLikelyAssetFromToken = (token: string): string | undefined => {
 
 const collectDomSnapshotStrings = (domSnapshotRaw: unknown): string[] => {
   if (!domSnapshotRaw || typeof domSnapshotRaw !== 'object') return []
-  const strings = (domSnapshotRaw as { strings?: unknown }).strings
+  const strings = (domSnapshotRaw as { strings?: unknown[] }).strings
   return asArray(strings).filter((entry): entry is string => typeof entry === 'string')
 }
 

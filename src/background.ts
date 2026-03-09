@@ -1,6 +1,8 @@
 import { runCDPCapture } from './cdp/orchestrator'
-import type { ActionTraceEventV0, CaptureSeed, MutationTraceEventV0 } from './cdp/types'
+import { extractPortableFromReplayCapsule } from './cdp/portableExtraction'
+import type { ActionTraceEventV0, CaptureBundleV0, CaptureSeed, MutationTraceEventV0 } from './cdp/types'
 import type { TargetFingerprint } from './cdp/nodeMappingTypes'
+import type { PortableFallbackExtractionDiagnostics } from './portableFallback/extractor'
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[component-snap] extension installed')
@@ -18,6 +20,14 @@ type StoredPayload = {
   title: string
   url: string
   selection: string
+  exportMode?: 'replay-first-capture-with-portable-fallback-export'
+  exportTier?: 'capsule' | 'fallback'
+  exportDiagnostics?: {
+    source?: 'replay-capsule' | 'portable-fallback'
+    warnings: string[]
+    confidencePenalty?: number
+    confidence?: number
+  }
   snappedAt?: string
   snapFolder?: string
   requestId?: string
@@ -34,6 +44,7 @@ type StoredPayload = {
     js?: string
     kind?: string
     screenshotDataUrl?: string
+    portableFallback?: PortableFallbackExtractionDiagnostics
     targetFingerprint?: TargetFingerprint
   }
 }
@@ -96,6 +107,12 @@ const saveDataUrl = async (dataUrl: string, filename: string) => {
   await chrome.downloads.download({ url: dataUrl, filename, saveAs: false, conflictAction: 'uniquify' })
 }
 
+const isCaptureBundle = (value: unknown): value is CaptureBundleV0 => {
+  if (!value || typeof value !== 'object') return false
+  const capture = value as Partial<CaptureBundleV0>
+  return capture.backend === 'cdp' && capture.version === '0' && typeof capture.seed === 'object'
+}
+
 const buildCaptureSeed = (
   requestId: string,
   tabId: number | undefined,
@@ -132,14 +149,25 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   const portableCss = payload.element?.css || '/* no css captured */'
   const freezeHtml = payload.element?.freezeHtml || portableHtml
   const js = payload.element?.js || "console.log('[component-snap] no js captured')"
-  const meta = JSON.stringify(payload, null, 2)
+  const metaPayload: StoredPayload = {
+    ...payload,
+    exportMode: 'replay-first-capture-with-portable-fallback-export',
+    exportTier: payload.exportTier || 'fallback',
+    exportDiagnostics: {
+      source: payload.exportDiagnostics?.source,
+      warnings: payload.exportDiagnostics?.warnings || [],
+      confidencePenalty: payload.exportDiagnostics?.confidencePenalty,
+      confidence: payload.exportDiagnostics?.confidence,
+    },
+  }
+  const meta = JSON.stringify(metaPayload, null, 2)
 
   const htmlDoc = (htmlBody: string, cssPath: string, jsPath: string) => `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Component Snap Preview</title>
+    <title>Component Snap Portable Fallback Preview</title>
     <link rel="stylesheet" href="${cssPath}" />
   </head>
   <body>
@@ -253,9 +281,53 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           }
         }
 
-        const enrichedPayload = {
+        const fallbackWarnings = message.payload?.element?.portableFallback?.warnings || []
+        const fallbackConfidencePenalty = message.payload?.element?.portableFallback?.confidencePenalty
+        const fallbackConfidence = message.payload?.element?.portableFallback?.confidence
+        const capsuleExtraction = extractPortableFromReplayCapsule(
+          isCaptureBundle(cdpCapture) ? cdpCapture : undefined,
+          message.payload?.element?.selector,
+        )
+
+        const enrichedPayload: StoredPayload = {
           ...message.payload,
+          element: {
+            ...message.payload?.element,
+            ...(capsuleExtraction.ok
+              ? {
+                  html: capsuleExtraction.artifacts.html,
+                  css: capsuleExtraction.artifacts.css,
+                  freezeHtml: capsuleExtraction.artifacts.freezeHtml,
+                  js: capsuleExtraction.artifacts.js,
+                  selector: capsuleExtraction.artifacts.selectedSelector || message.payload?.element?.selector,
+                }
+              : {}),
+          },
           cdpCapture,
+          exportMode: 'replay-first-capture-with-portable-fallback-export',
+          exportTier: capsuleExtraction.ok ? 'capsule' : 'fallback',
+          exportDiagnostics: {
+            source: capsuleExtraction.ok ? capsuleExtraction.diagnostics.source : 'portable-fallback',
+            warnings: capsuleExtraction.ok ? capsuleExtraction.diagnostics.warnings : [...capsuleExtraction.warnings, ...fallbackWarnings],
+            confidencePenalty: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidencePenalty : fallbackConfidencePenalty,
+            confidence: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidence : fallbackConfidence,
+          },
+        }
+
+        if (capsuleExtraction.ok) {
+          log(
+            'portable_capsule_export_used',
+            'info',
+            message.requestId,
+            `${capsuleExtraction.diagnostics.warnings.join(', ')} | confidence=${capsuleExtraction.diagnostics.confidence.toFixed(2)}`,
+          )
+        } else if (enrichedPayload.exportDiagnostics?.warnings.length) {
+          log(
+            'portable_fallback_export_used',
+            'info',
+            message.requestId,
+            `${capsuleExtraction.reason}; ${enrichedPayload.exportDiagnostics.warnings.join(', ')} | confidence=${String(enrichedPayload.exportDiagnostics.confidence ?? 'n/a')}`,
+          )
         }
 
         const folder = await saveSnapFiles(enrichedPayload)

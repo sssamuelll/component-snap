@@ -4,7 +4,9 @@ An advanced Chrome Extension (Manifest V3) engineered to capture UI components f
 
 ## 🚀 The Atomic Motion Engine
 
-Component Snap features a proprietary capture engine designed to bypass the limitations of traditional DOM cloning:
+Component Snap follows a replay-first capture direction. The single-folder `component.html/css/js` output is retained as a portable fallback extractor, not the primary architecture.
+
+The portable fallback extractor currently:
 
 - **Atomic Scoped Stylesheets:** Replaces static inline styles with dynamic, per-node CSS mappings (`[data-csnap="X"]`). This preserves the "soul" of the component, allowing original CSS transitions and animations to interpolate correctly between states.
 - **Shadow-Piercing Traversal:** Recursively navigates and flattens every `ShadowRoot` on the page, piercing encapsulation boundaries to capture hidden icons and sub-components.
@@ -17,7 +19,7 @@ Component Snap features a proprietary capture engine designed to bypass the limi
 - **DevTools-Style Picker:** Activate a visual selector to identify the perfect component "shell" using a confidence-weighted traversal algorithm.
 - **Action Mirror Engine:** Injects a functional layer into exports that provides visual ripple feedback on interactions and logs events to the console.
 - **Dark Mode Aware:** Automatically detects the original page's color scheme and background to ensure the preview is contextually accurate.
-- **High-Fidelity Exports:** Generates single-folder bundles containing everything needed to reproduce the component in isolation.
+- **Portable Fallback Exports:** Generates a single-folder lower-tier bundle for portability/debug workflows.
 
 ## 📁 Export Structure
 
