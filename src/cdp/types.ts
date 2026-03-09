@@ -69,6 +69,7 @@ export interface CaptureBundleV0 {
   cssGraph?: MatchedStyleGraphV0
   resourceGraph?: ResourceGraphV0
   replayCapsule?: ReplayCapsuleV0
+  fidelity?: FidelityScoringV0
   debug?: {
     warnings: string[]
   }
@@ -152,7 +153,32 @@ export interface ReplayCapsuleV0 {
     missingArtifacts?: string[]
     timelineEventCount?: number
     warnings?: string[]
+    fidelity?: FidelityScoringV0
   }
+}
+
+export interface FidelityDimensionScoreV0 {
+  score: number
+  confidence: number
+  evidence: string[]
+  warnings?: string[]
+}
+
+export interface FidelityScoringV0 {
+  version: '0'
+  computedAt: string
+  overall: {
+    score: number
+    confidence: number
+  }
+  dimensions: {
+    visual: FidelityDimensionScoreV0
+    interaction: FidelityDimensionScoreV0
+    assetCompleteness: FidelityDimensionScoreV0
+    structuralConfidence: FidelityDimensionScoreV0
+  }
+  warnings: string[]
+  notes: string[]
 }
 
 export interface ShadowTopologySheetV0 {

@@ -1,6 +1,7 @@
 import { runCDPCapture } from './cdp/orchestrator'
+import { scoreCaptureFidelity } from './cdp/fidelityScoring'
 import { extractPortableFromReplayCapsule } from './cdp/portableExtraction'
-import type { ActionTraceEventV0, CaptureBundleV0, CaptureSeed, MutationTraceEventV0 } from './cdp/types'
+import type { ActionTraceEventV0, CaptureBundleV0, CaptureSeed, FidelityScoringV0, MutationTraceEventV0 } from './cdp/types'
 import type { TargetFingerprint } from './cdp/nodeMappingTypes'
 import type { PortableFallbackExtractionDiagnostics } from './portableFallback/extractor'
 
@@ -27,6 +28,7 @@ type StoredPayload = {
     warnings: string[]
     confidencePenalty?: number
     confidence?: number
+    fidelity?: FidelityScoringV0
   }
   snappedAt?: string
   snapFolder?: string
@@ -158,6 +160,7 @@ const saveSnapFiles = async (payload: StoredPayload) => {
       warnings: payload.exportDiagnostics?.warnings || [],
       confidencePenalty: payload.exportDiagnostics?.confidencePenalty,
       confidence: payload.exportDiagnostics?.confidence,
+      fidelity: payload.exportDiagnostics?.fidelity,
     },
   }
   const meta = JSON.stringify(metaPayload, null, 2)
@@ -288,6 +291,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           isCaptureBundle(cdpCapture) ? cdpCapture : undefined,
           message.payload?.element?.selector,
         )
+        const fidelity = scoreCaptureFidelity({
+          capture: isCaptureBundle(cdpCapture) ? cdpCapture : undefined,
+          portableDiagnostics: capsuleExtraction.ok
+            ? capsuleExtraction.diagnostics
+            : {
+                source: 'portable-fallback',
+                warnings: [...capsuleExtraction.warnings, ...fallbackWarnings],
+                confidencePenalty: fallbackConfidencePenalty,
+                confidence: fallbackConfidence,
+              },
+        })
 
         const enrichedPayload: StoredPayload = {
           ...message.payload,
@@ -311,6 +325,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             warnings: capsuleExtraction.ok ? capsuleExtraction.diagnostics.warnings : [...capsuleExtraction.warnings, ...fallbackWarnings],
             confidencePenalty: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidencePenalty : fallbackConfidencePenalty,
             confidence: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidence : fallbackConfidence,
+            fidelity,
           },
         }
 

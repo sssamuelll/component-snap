@@ -188,6 +188,8 @@ describe('runCDPCapture css integration', () => {
     expect(bundle.shadowTopology?.diagnostics?.totalShadowRoots).toBe(0)
     expect(bundle.resourceGraph?.nodes[0]?.kind).toBe('document')
     expect(bundle.replayCapsule?.mode).toBe('snapshot-first')
+    expect(bundle.fidelity?.overall.score).toBeGreaterThan(0)
+    expect(bundle.replayCapsule?.diagnostics?.fidelity?.overall.confidence).toBeGreaterThan(0)
     expect((bundle.debug?.warnings || []).join(' ')).toContain('replay_capsule: replay-capsule-empty-timeline')
   })
 

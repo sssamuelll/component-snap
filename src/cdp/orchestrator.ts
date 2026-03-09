@@ -10,6 +10,7 @@ import { mergeReplayTimelineEvents } from './replayTimeline'
 import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
+import { scoreCaptureFidelity } from './fidelityScoring'
 import type { CaptureBundleV0, CaptureSeed } from './types'
 
 const createCaptureId = () => `cdp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -81,7 +82,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     const replayCapsule = replayCapsuleCapture.replayCapsule
     warnings.push(...replayCapsuleCapture.warnings.map((warning) => `replay_capsule: ${warning}`))
 
-    return {
+    const bundle: CaptureBundleV0 = {
       version: '0',
       captureId: createCaptureId(),
       createdAt,
@@ -107,6 +108,18 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       replayCapsule,
       debug: { warnings },
     }
+
+    const fidelity = scoreCaptureFidelity({ capture: bundle })
+    bundle.fidelity = fidelity
+    if (bundle.replayCapsule) {
+      bundle.replayCapsule.diagnostics = {
+        ...bundle.replayCapsule.diagnostics,
+        fidelity,
+      }
+    }
+    warnings.push(...fidelity.warnings.map((warning) => `fidelity: ${warning}`))
+
+    return bundle
   } catch (error) {
     warnings.push(String(error))
     throw error
