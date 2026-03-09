@@ -1,5 +1,5 @@
 import { runCDPCapture } from './cdp/orchestrator'
-import type { CaptureSeed } from './cdp/types'
+import type { ActionTraceEventV0, CaptureSeed } from './cdp/types'
 import type { TargetFingerprint } from './cdp/nodeMappingTypes'
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -96,7 +96,13 @@ const saveDataUrl = async (dataUrl: string, filename: string) => {
   await chrome.downloads.download({ url: dataUrl, filename, saveAs: false, conflictAction: 'uniquify' })
 }
 
-const buildCaptureSeed = (requestId: string, tabId: number | undefined, payload: StoredPayload, clipRect?: ClipRect): CaptureSeed => ({
+const buildCaptureSeed = (
+  requestId: string,
+  tabId: number | undefined,
+  payload: StoredPayload,
+  clipRect?: ClipRect,
+  actionTraceEvents?: ActionTraceEventV0[],
+): CaptureSeed => ({
   requestId,
   tabId,
   pageUrl: payload.url,
@@ -112,6 +118,7 @@ const buildCaptureSeed = (requestId: string, tabId: number | undefined, payload:
     kind: payload.element?.kind,
   },
   targetFingerprint: payload.element?.targetFingerprint,
+  actionTraceEvents,
 })
 
 const saveSnapFiles = async (payload: StoredPayload) => {
@@ -228,7 +235,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         let cdpCapture: unknown
         if (tabId) {
           try {
-            cdpCapture = await runCDPCapture(buildCaptureSeed(message.requestId, tabId, message.payload, message.clipRect))
+            cdpCapture = await runCDPCapture(
+              buildCaptureSeed(message.requestId, tabId, message.payload, message.clipRect, message.actionTraceEvents),
+            )
             log('cdp_capture_done', 'info', message.requestId)
           } catch (error) {
             log('cdp_capture_failed', 'error', message.requestId, String(error))

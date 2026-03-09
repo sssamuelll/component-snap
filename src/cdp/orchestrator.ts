@@ -3,6 +3,7 @@ import { captureCSSProvenanceGraph } from './cssCapture'
 import { captureDomSnapshot } from './domSnapshotCapture'
 import { mapTargetToCDPNode } from './nodeMapping'
 import { captureScreenshots } from './pageCapture'
+import { buildActionTraceTimelineEvents } from './actionTraceTimeline'
 import { buildReplayCapsule } from './replayCapsule'
 import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
@@ -71,7 +72,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       cssGraph,
       shadowTopology,
       resourceGraph,
-      timelineEvents: [],
+      timelineEvents: buildActionTraceTimelineEvents(seed.actionTraceEvents),
     })
     const replayCapsule = replayCapsuleCapture.replayCapsule
     warnings.push(...replayCapsuleCapture.warnings.map((warning) => `replay_capsule: ${warning}`))

@@ -70,12 +70,13 @@ vi.mock('./replayCapsule', () => ({
 
 import { runCDPCapture } from './orchestrator'
 
-const createSeed = (): CaptureSeed => ({
+const createSeed = (overrides?: Partial<CaptureSeed>): CaptureSeed => ({
   requestId: 'req-1',
   tabId: 23,
   pageUrl: 'https://example.com',
   pageTitle: 'Example',
   selectedSelector: '.target',
+  ...overrides,
 })
 
 describe('runCDPCapture css integration', () => {
@@ -188,6 +189,41 @@ describe('runCDPCapture css integration', () => {
     expect(bundle.resourceGraph?.nodes[0]?.kind).toBe('document')
     expect(bundle.replayCapsule?.mode).toBe('snapshot-first')
     expect((bundle.debug?.warnings || []).join(' ')).toContain('replay_capsule: replay-capsule-empty-timeline')
+  })
+
+  it('maps action traces from seed into replay capsule timeline input', async () => {
+    mocks.mapTargetToCDPNode.mockResolvedValue({
+      resolved: false,
+      confidence: 0.1,
+      strategy: 'unresolved',
+      evidence: ['none'],
+    })
+
+    await runCDPCapture(
+      createSeed({
+        actionTraceEvents: [
+          { type: 'click', atMs: 40.2, selector: '.target', tagName: 'button' },
+          { type: 'keyboard', atMs: 12.9, key: 'Enter', code: 'Enter' },
+        ],
+      }),
+    )
+
+    expect(mocks.buildReplayCapsule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timelineEvents: [
+          expect.objectContaining({
+            kind: 'action-trace',
+            atMs: 13,
+            action: expect.objectContaining({ type: 'keyboard', atMs: 13 }),
+          }),
+          expect.objectContaining({
+            kind: 'action-trace',
+            atMs: 40,
+            action: expect.objectContaining({ type: 'click', atMs: 40, selector: '.target' }),
+          }),
+        ],
+      }),
+    )
   })
 
   it('fails soft with warning when node mapping is unresolved', async () => {

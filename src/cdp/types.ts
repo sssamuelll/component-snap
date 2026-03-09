@@ -25,6 +25,7 @@ export interface CaptureSeed {
     kind?: string
   }
   targetFingerprint?: TargetFingerprint
+  actionTraceEvents?: ActionTraceEventV0[]
 }
 
 export interface CaptureBundleV0 {
@@ -72,15 +73,39 @@ export interface CaptureBundleV0 {
   }
 }
 
-export type ReplayTimelineEventKindV0 = 'action' | 'mutation'
+export type ActionTraceEventTypeV0 = 'click' | 'hover' | 'input' | 'focus' | 'keyboard'
 
-export interface ReplayTimelineEventV0 {
-  kind: ReplayTimelineEventKindV0
+export interface ActionTraceEventV0 {
+  type: ActionTraceEventTypeV0
+  atMs: number
+  selector?: string
+  tagName?: string
+  text?: string
+  key?: string
+  code?: string
+  value?: string
+}
+
+export type ReplayTimelineEventKindV0 = 'action-trace' | 'mutation'
+
+export interface ReplayActionTraceTimelineEventV0 {
+  kind: 'action-trace'
+  atMs: number
+  action: ActionTraceEventV0
+  targetNodeId?: number
+  label?: string
+  payload?: Record<string, unknown>
+}
+
+export interface ReplayMutationTimelineEventV0 {
+  kind: 'mutation'
   atMs: number
   targetNodeId?: number
   label?: string
   payload?: Record<string, unknown>
 }
+
+export type ReplayTimelineEventV0 = ReplayActionTraceTimelineEventV0 | ReplayMutationTimelineEventV0
 
 export interface ReplayTimelineV0 {
   events: ReplayTimelineEventV0[]

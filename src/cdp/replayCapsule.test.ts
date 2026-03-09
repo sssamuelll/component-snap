@@ -60,4 +60,34 @@ describe('buildReplayCapsule', () => {
       'resourceGraph',
     ])
   })
+
+  it('keeps typed action trace events in timeline', () => {
+    const result = buildReplayCapsule({
+      createdAt: '2026-03-09T10:00:00.000Z',
+      page,
+      screenshot: { fullPageDataUrl: 'data:image/png;base64,abc' },
+      domSnapshot: { raw: { documents: [] }, stats: { documents: 0, nodes: 0 } },
+      timelineEvents: [
+        {
+          kind: 'action-trace',
+          atMs: 21,
+          label: 'Click',
+          action: { type: 'click', atMs: 21, selector: '.cta', tagName: 'button' },
+          payload: { selector: '.cta' },
+        },
+      ],
+    })
+
+    expect(result.replayCapsule.timeline.events).toEqual([
+      {
+        kind: 'action-trace',
+        atMs: 21,
+        label: 'Click',
+        action: { type: 'click', atMs: 21, selector: '.cta', tagName: 'button' },
+        payload: { selector: '.cta' },
+      },
+    ])
+    expect(result.replayCapsule.diagnostics?.timelineEventCount).toBe(1)
+    expect(result.warnings).not.toContain('replay-capsule-empty-timeline')
+  })
 })

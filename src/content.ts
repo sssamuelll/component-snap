@@ -1,4 +1,5 @@
 import { buildStableSelector, classifyComponent } from './core/snap'
+import type { ActionTraceEventV0 } from './cdp/types'
 
 type ContentMessage =
   | { type: 'GET_SELECTION' }
@@ -44,6 +45,12 @@ type ElementSnap = {
 
 let isInspecting = false, isProcessing = false, currentRequestId: string | null = null
 let overlay: HTMLDivElement | null = null, blocker: HTMLDivElement | null = null
+const MAX_ACTION_TRACE_EVENTS = 180
+const HOVER_SAMPLE_INTERVAL_MS = 120
+let actionTraceStartAt = 0
+let actionTraceEvents: ActionTraceEventV0[] = []
+let lastHoverSignature = ''
+let lastHoverAtMs = -Infinity
 
 const STYLE_PROPS = [
   'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 
@@ -394,6 +401,7 @@ if (!root) {
 `
 
 const toCompactText = (value: string) => value.replace(/\s+/g, ' ').trim()
+const toActionTextPreview = (value: string) => toCompactText(value).slice(0, 160)
 
 const getSiblingIndex = (el: HTMLElement) => {
   const parent = el.parentElement
@@ -481,6 +489,45 @@ const ensureBlocker = () => {
   document.documentElement.appendChild(blocker); return blocker
 }
 
+const getActionTarget = (target: EventTarget | null): HTMLElement | null => {
+  if (target instanceof HTMLElement) return target
+  if (target instanceof SVGElement) return target.parentElement
+  return null
+}
+
+const actionAtMs = () => {
+  if (actionTraceStartAt <= 0) return 0
+  return Math.max(0, Math.round(performance.now() - actionTraceStartAt))
+}
+
+const pushActionTrace = (event: ActionTraceEventV0) => {
+  if (!isInspecting) return
+  actionTraceEvents.push(event)
+  if (actionTraceEvents.length > MAX_ACTION_TRACE_EVENTS) {
+    actionTraceEvents = actionTraceEvents.slice(actionTraceEvents.length - MAX_ACTION_TRACE_EVENTS)
+  }
+}
+
+const recordActionFromElement = (
+  type: ActionTraceEventV0['type'],
+  el: HTMLElement | null,
+  extra?: Omit<ActionTraceEventV0, 'type' | 'atMs' | 'selector' | 'tagName'>,
+) => {
+  const event: ActionTraceEventV0 = {
+    type,
+    atMs: actionAtMs(),
+  }
+  if (el) {
+    event.selector = buildStableSelector(el)
+    event.tagName = el.tagName.toLowerCase()
+  }
+  if (extra?.text) event.text = extra.text
+  if (extra?.key) event.key = extra.key
+  if (extra?.code) event.code = extra.code
+  if (typeof extra?.value === 'string') event.value = extra.value
+  pushActionTrace(event)
+}
+
 const getUnderlyingElement = (x: number, y: number) => {
   const b = ensureBlocker(); b.style.display = 'none'
   const target = document.elementFromPoint(x, y) as HTMLElement | null
@@ -494,6 +541,12 @@ const drawOverlay = (el: HTMLElement) => {
 
 const stopInspect = () => {
   isInspecting = false; isProcessing = false; currentRequestId = null
+  if (blocker) {
+    blocker.removeEventListener('mousemove', onBlockerMouseMove, true)
+    blocker.removeEventListener('click', onBlockerClickCapture, true)
+  }
+  window.removeEventListener('input', onGlobalInput, true)
+  window.removeEventListener('focusin', onGlobalFocusIn, true)
   if (overlay) overlay.style.display = 'none'
   if (blocker) blocker.remove(); blocker = null
   window.removeEventListener('keydown', onKeyDown, true)
@@ -504,6 +557,13 @@ const onBlockerMouseMove = (event: MouseEvent) => {
   const target = getUnderlyingElement(event.clientX, event.clientY)
   if (!target || target.id === '__component_snap_overlay__') return
   drawOverlay(target)
+  const signature = `${buildStableSelector(target)}@${target.tagName.toLowerCase()}`
+  const now = performance.now()
+  if (signature !== lastHoverSignature && now - lastHoverAtMs >= HOVER_SAMPLE_INTERVAL_MS) {
+    recordActionFromElement('hover', target)
+    lastHoverSignature = signature
+    lastHoverAtMs = now
+  }
 }
 
 const onBlockerClick = async (event: MouseEvent) => {
@@ -511,6 +571,9 @@ const onBlockerClick = async (event: MouseEvent) => {
   isProcessing = true; event.preventDefault(); event.stopImmediatePropagation()
   const target = getUnderlyingElement(event.clientX, event.clientY)
   if (!target) { isProcessing = false; return }
+  recordActionFromElement('click', target, {
+    text: toActionTextPreview(target.textContent || ''),
+  })
   const targetFingerprint = buildTargetFingerprint(target)
   const captureRoot = findVisualRoot(target)
   const rect = captureRoot.getBoundingClientRect(), selector = buildStableSelector(captureRoot)
@@ -525,17 +588,64 @@ const onBlockerClick = async (event: MouseEvent) => {
       targetFingerprint,
     },
   }
-  chrome.runtime.sendMessage({ type: 'ELEMENT_SELECTED', requestId: currentRequestId, payload: snap, clipRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 } }, () => stopInspect())
+  chrome.runtime.sendMessage(
+    {
+      type: 'ELEMENT_SELECTED',
+      requestId: currentRequestId,
+      payload: snap,
+      actionTraceEvents,
+      clipRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 },
+    },
+    () => stopInspect(),
+  )
 }
 
-const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); stopInspect() } }
+const onBlockerClickCapture = (event: MouseEvent) => {
+  onBlockerClick(event).catch(() => stopInspect())
+}
+
+const onGlobalInput = (event: Event) => {
+  if (!isInspecting || isProcessing) return
+  const target = getActionTarget(event.target)
+  if (!target) return
+
+  const value =
+    target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      ? target.value
+      : target.isContentEditable
+        ? target.textContent || ''
+        : ''
+  recordActionFromElement('input', target, { value: toActionTextPreview(value) })
+}
+
+const onGlobalFocusIn = (event: FocusEvent) => {
+  if (!isInspecting || isProcessing) return
+  const target = getActionTarget(event.target)
+  if (!target) return
+  recordActionFromElement('focus', target)
+}
+
+const onKeyDown = (event: KeyboardEvent) => {
+  if (!isInspecting) return
+  recordActionFromElement('keyboard', getActionTarget(event.target), {
+    key: event.key,
+    code: event.code,
+  })
+  if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); stopInspect() }
+}
 
 const startInspect = (requestId: string) => {
   if (isInspecting) return
   isInspecting = true; isProcessing = false; currentRequestId = requestId
+  actionTraceStartAt = performance.now()
+  actionTraceEvents = []
+  lastHoverSignature = ''
+  lastHoverAtMs = -Infinity
   const b = ensureBlocker()
   b.addEventListener('mousemove', onBlockerMouseMove, true)
-  b.addEventListener('click', (e) => { onBlockerClick(e).catch(() => stopInspect()) }, true)
+  b.addEventListener('click', onBlockerClickCapture, true)
+  window.addEventListener('input', onGlobalInput, true)
+  window.addEventListener('focusin', onGlobalFocusIn, true)
   window.addEventListener('keydown', onKeyDown, true)
 }
 
