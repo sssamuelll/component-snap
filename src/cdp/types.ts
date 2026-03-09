@@ -65,6 +65,7 @@ export interface CaptureBundleV0 {
   shadowTopology?: ShadowTopologyV0
   nodeMapping?: NodeMappingResult
   cssGraph?: MatchedStyleGraphV0
+  resourceGraph?: ResourceGraphV0
   debug?: {
     warnings: string[]
   }
@@ -176,6 +177,53 @@ export interface MatchedStyleGraphV0 {
     matchedRuleWithoutSelectorCount?: number
     matchedRuleUserAgentCount?: number
     matchedRuleWithIncompleteStylesheetMetadataCount?: number
+    warnings?: string[]
+  }
+}
+
+export interface ResourceGraphNodeV0 {
+  id: string
+  kind: 'document' | 'origin' | 'stylesheet' | 'font' | 'image' | 'script' | 'svg-reference' | 'other'
+  label?: string
+  url?: string
+  ref?: string
+  source?: 'capture' | 'cssGraph' | 'shadowTopology' | 'domSnapshot'
+  inline?: boolean
+}
+
+export interface ResourceGraphEdgeV0 {
+  from: string
+  to: string
+  kind: 'contains' | 'references' | 'depends-on'
+  reason?: string
+}
+
+export interface ResourceGraphV0 {
+  nodes: ResourceGraphNodeV0[]
+  edges: ResourceGraphEdgeV0[]
+  bundler?: {
+    mode: 'light'
+    assets: Array<{
+      nodeId: string
+      kind: ResourceGraphNodeV0['kind']
+      url?: string
+      ref?: string
+      fetchMode: 'network' | 'inline-data' | 'unresolved'
+      required?: boolean
+    }>
+  }
+  diagnostics?: {
+    nodeCount?: number
+    edgeCount?: number
+    resourceNodeCount?: number
+    stylesheetCount?: number
+    fontCount?: number
+    imageCount?: number
+    scriptCount?: number
+    svgReferenceCount?: number
+    otherCount?: number
+    bundleAssetCount?: number
+    unresolvedBundleAssetCount?: number
     warnings?: string[]
   }
 }

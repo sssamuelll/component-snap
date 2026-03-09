@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const captureDomSnapshot = vi.fn()
   const captureCSSProvenanceGraph = vi.fn()
   const captureShadowTopology = vi.fn()
+  const buildResourceGraph = vi.fn()
   return {
     attach,
     detach,
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => {
     captureDomSnapshot,
     captureCSSProvenanceGraph,
     captureShadowTopology,
+    buildResourceGraph,
   }
 })
 
@@ -54,6 +56,10 @@ vi.mock('./cssCapture', () => ({
 
 vi.mock('./shadowTopology', () => ({
   captureShadowTopology: mocks.captureShadowTopology,
+}))
+
+vi.mock('./resourceGraph', () => ({
+  buildResourceGraph: mocks.buildResourceGraph,
 }))
 
 import { runCDPCapture } from './orchestrator'
@@ -102,6 +108,14 @@ describe('runCDPCapture css integration', () => {
       shadowTopology: { roots: [], diagnostics: { totalShadowRoots: 0 } },
       warnings: [],
     })
+
+    mocks.buildResourceGraph.mockReturnValue({
+      resourceGraph: {
+        nodes: [{ id: 'res_0', kind: 'document', source: 'capture', url: 'https://example.com', label: 'document' }],
+        edges: [],
+      },
+      warnings: [],
+    })
   })
 
   it('attaches cssGraph when node mapping resolves a nodeId', async () => {
@@ -128,6 +142,7 @@ describe('runCDPCapture css integration', () => {
     })
     expect(bundle.cssGraph?.target.nodeId).toBe(44)
     expect(bundle.shadowTopology?.diagnostics?.totalShadowRoots).toBe(0)
+    expect(bundle.resourceGraph?.nodes[0]?.kind).toBe('document')
   })
 
   it('fails soft with warning when node mapping is unresolved', async () => {
@@ -142,6 +157,7 @@ describe('runCDPCapture css integration', () => {
     expect(mocks.captureCSSProvenanceGraph).not.toHaveBeenCalled()
     expect(bundle.cssGraph).toBeUndefined()
     expect((bundle.debug?.warnings || []).join(' ')).toContain('css_capture_skipped: node-unresolved')
+    expect(bundle.resourceGraph).toBeDefined()
   })
 
   it('passes through shadow topology warnings as debug warnings', async () => {
@@ -162,5 +178,25 @@ describe('runCDPCapture css integration', () => {
     const bundle = await runCDPCapture(createSeed())
     expect(bundle.shadowTopology?.diagnostics?.closedShadowRootCount).toBe(1)
     expect((bundle.debug?.warnings || []).join(' ')).toContain('shadow_topology: closed-shadow-root-unavailable')
+  })
+
+  it('passes through resource graph warnings as debug warnings', async () => {
+    mocks.mapTargetToCDPNode.mockResolvedValue({
+      resolved: false,
+      confidence: 0.1,
+      strategy: 'unresolved',
+      evidence: ['none'],
+    })
+    mocks.buildResourceGraph.mockReturnValue({
+      resourceGraph: {
+        nodes: [{ id: 'res_0', kind: 'document', source: 'capture', label: 'document' }],
+        edges: [],
+      },
+      warnings: ['resource-graph-empty'],
+    })
+
+    const bundle = await runCDPCapture(createSeed())
+    expect(bundle.resourceGraph?.nodes).toHaveLength(1)
+    expect((bundle.debug?.warnings || []).join(' ')).toContain('resource_graph: resource-graph-empty')
   })
 })

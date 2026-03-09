@@ -3,6 +3,7 @@ import { captureCSSProvenanceGraph } from './cssCapture'
 import { captureDomSnapshot } from './domSnapshotCapture'
 import { mapTargetToCDPNode } from './nodeMapping'
 import { captureScreenshots } from './pageCapture'
+import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
 import type { CaptureBundleV0, CaptureSeed } from './types'
@@ -42,6 +43,15 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       warnings.push('css_capture_skipped: node-unresolved')
     }
 
+    const resourceGraphCapture = buildResourceGraph({
+      pageUrl: runtime.url || seed.pageUrl,
+      cssGraph,
+      shadowTopology,
+      domSnapshotRaw: domSnapshot.raw,
+    })
+    const resourceGraph = resourceGraphCapture.resourceGraph
+    warnings.push(...resourceGraphCapture.warnings.map((warning) => `resource_graph: ${warning}`))
+
     return {
       version: '0',
       captureId: createCaptureId(),
@@ -64,6 +74,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       shadowTopology,
       nodeMapping,
       cssGraph,
+      resourceGraph,
       debug: { warnings },
     }
   } catch (error) {
