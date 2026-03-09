@@ -65,6 +65,7 @@ export interface CaptureBundleV0 {
     webglPresent?: boolean
   }
   shadowTopology?: ShadowTopologyV0
+  targetSubtree?: TargetSubtreeV0
   nodeMapping?: NodeMappingResult
   cssGraph?: MatchedStyleGraphV0
   resourceGraph?: ResourceGraphV0
@@ -146,6 +147,7 @@ export interface ReplayCapsuleV0 {
     nodeMapping?: NodeMappingResult
     cssGraph?: MatchedStyleGraphV0
     shadowTopology?: ShadowTopologyV0
+    targetSubtree?: TargetSubtreeV0
     resourceGraph?: ResourceGraphV0
   }
   timeline: ReplayTimelineV0
@@ -155,6 +157,17 @@ export interface ReplayCapsuleV0 {
     warnings?: string[]
     fidelity?: FidelityScoringV0
   }
+}
+
+export interface TargetSubtreeV0 {
+  source: 'runtime-object' | 'selector-fallback'
+  html: string
+  nodeCount: number
+  elementCount: number
+  textNodeCount: number
+  textLength: number
+  maxDepth: number
+  warnings?: string[]
 }
 
 export interface FidelityDimensionScoreV0 {

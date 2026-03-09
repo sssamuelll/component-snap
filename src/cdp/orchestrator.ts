@@ -10,6 +10,7 @@ import { mergeReplayTimelineEvents } from './replayTimeline'
 import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
+import { captureTargetSubtree } from './targetSubtree'
 import { scoreCaptureFidelity } from './fidelityScoring'
 import type { CaptureBundleV0, CaptureSeed } from './types'
 
@@ -34,6 +35,14 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       warnings.push(`node_mapping_failed: ${String(error)}`)
       return undefined
     })
+    const targetSubtree = await captureTargetSubtree(client, nodeMapping, seed).catch((error) => {
+      warnings.push(`target_subtree_failed: ${String(error)}`)
+      return undefined
+    })
+    if (targetSubtree?.warnings?.length) {
+      warnings.push(...targetSubtree.warnings.map((warning) => `target_subtree: ${warning}`))
+    }
+
     let cssGraph: CaptureBundleV0['cssGraph']
 
     if (nodeMapping?.resolved && nodeMapping.node?.nodeId) {
@@ -76,6 +85,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       nodeMapping,
       cssGraph,
       shadowTopology,
+      targetSubtree,
       resourceGraph,
       timelineEvents: mergeReplayTimelineEvents(actionTimelineEvents, mutationTimelineEvents),
     })
@@ -102,6 +112,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       domSnapshot,
       runtimeHints: runtime.runtimeHints,
       shadowTopology,
+      targetSubtree,
       nodeMapping,
       cssGraph,
       resourceGraph,

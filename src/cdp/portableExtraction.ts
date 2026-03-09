@@ -194,6 +194,7 @@ export const extractPortableFromReplayCapsule = (
   const cssGraph = replayCapsule.snapshot.cssGraph
   const resourceGraph = replayCapsule.snapshot.resourceGraph
   const shadowTopology = replayCapsule.snapshot.shadowTopology
+  const targetSubtree = replayCapsule.snapshot.targetSubtree || capture.targetSubtree
   const selectedSelector = pickSelector(capture, replayCapsule, fallbackSelector)
 
   if (!selectedSelector) {
@@ -231,7 +232,10 @@ export const extractPortableFromReplayCapsule = (
     ? `\n<script type="application/json" id="component-snap-shadow-topology">${escapeHtml(shadowMetadata)}</script>`
     : ''
 
-  const html = `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
+  const subtreeHtml = targetSubtree?.html?.trim()
+  const html = subtreeHtml
+    ? `${subtreeHtml}${shadowInfo}`
+    : `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
   const htmlAnalysis = analyzePortableHtml(html)
 
   const warnings = [
@@ -258,6 +262,14 @@ export const extractPortableFromReplayCapsule = (
 
   let confidencePenalty = 0.14
 
+  if (!targetSubtree?.html?.trim()) {
+    warnings.push('replay-capsule-target-subtree-missing')
+    confidencePenalty += 0.18
+  }
+  if (targetSubtree && targetSubtree.textLength === 0) {
+    warnings.push('replay-capsule-target-subtree-text-thin')
+    confidencePenalty += 0.06
+  }
   if (shadowRootCount > 0) confidencePenalty += 0.06
   if (unresolvedRequiredAssets > 0) {
     confidencePenalty += Math.min(0.35, unresolvedRequiredAssets * 0.08)

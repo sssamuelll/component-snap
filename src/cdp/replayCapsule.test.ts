@@ -31,6 +31,15 @@ describe('buildReplayCapsule', () => {
         matchedRules: [],
       },
       shadowTopology: { roots: [], diagnostics: { totalShadowRoots: 0 } },
+      targetSubtree: {
+        source: 'runtime-object',
+        html: '<button class="cta">Buy now</button>',
+        nodeCount: 1,
+        elementCount: 1,
+        textNodeCount: 1,
+        textLength: 7,
+        maxDepth: 0,
+      },
       resourceGraph: { nodes: [{ id: 'res_0', kind: 'document' }], edges: [] },
     })
 
@@ -57,6 +66,7 @@ describe('buildReplayCapsule', () => {
       'nodeMapping',
       'cssGraph',
       'shadowTopology',
+      'targetSubtree',
       'resourceGraph',
     ])
   })

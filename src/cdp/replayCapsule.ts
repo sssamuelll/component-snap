@@ -8,6 +8,7 @@ export interface BuildReplayCapsuleInput {
   nodeMapping?: CaptureBundleV0['nodeMapping']
   cssGraph?: CaptureBundleV0['cssGraph']
   shadowTopology?: CaptureBundleV0['shadowTopology']
+  targetSubtree?: CaptureBundleV0['targetSubtree']
   resourceGraph?: CaptureBundleV0['resourceGraph']
   timelineEvents?: ReplayTimelineEventV0[]
 }
@@ -32,6 +33,7 @@ export const buildReplayCapsule = (input: BuildReplayCapsuleInput): ReplayCapsul
   if (!input.nodeMapping) missingArtifacts.push('nodeMapping')
   if (!input.cssGraph) missingArtifacts.push('cssGraph')
   if (!input.shadowTopology) missingArtifacts.push('shadowTopology')
+  if (!input.targetSubtree) missingArtifacts.push('targetSubtree')
   if (!input.resourceGraph) missingArtifacts.push('resourceGraph')
 
   if (missingArtifacts.length > 0) warnings.push(`replay-capsule-missing-artifacts:${missingArtifacts.join(',')}`)
@@ -49,6 +51,7 @@ export const buildReplayCapsule = (input: BuildReplayCapsuleInput): ReplayCapsul
         nodeMapping: input.nodeMapping,
         cssGraph: input.cssGraph,
         shadowTopology: input.shadowTopology,
+        targetSubtree: input.targetSubtree,
         resourceGraph: input.resourceGraph,
       },
       timeline: {
