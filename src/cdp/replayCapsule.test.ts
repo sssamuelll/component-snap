@@ -40,6 +40,15 @@ describe('buildReplayCapsule', () => {
         textLength: 7,
         maxDepth: 0,
       },
+      candidateSubtree: {
+        source: 'normalized-subtree',
+        html: '<button class="cta">Buy now</button>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 0,
+        nodeCount: 1,
+        textLength: 7,
+      },
       resourceGraph: { nodes: [{ id: 'res_0', kind: 'document' }], edges: [] },
     })
 
@@ -67,6 +76,7 @@ describe('buildReplayCapsule', () => {
       'cssGraph',
       'shadowTopology',
       'targetSubtree',
+      'candidateSubtree',
       'resourceGraph',
     ])
   })

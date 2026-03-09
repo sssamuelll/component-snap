@@ -11,6 +11,7 @@ import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
 import { captureTargetSubtree } from './targetSubtree'
+import { normalizeTargetSubtree } from './targetSubtreeNormalization'
 import { scoreCaptureFidelity } from './fidelityScoring'
 import type { CaptureBundleV0, CaptureSeed } from './types'
 
@@ -41,6 +42,10 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     })
     if (targetSubtree?.warnings?.length) {
       warnings.push(...targetSubtree.warnings.map((warning) => `target_subtree: ${warning}`))
+    }
+    const candidateSubtree = normalizeTargetSubtree(targetSubtree)
+    if (candidateSubtree?.warnings?.length) {
+      warnings.push(...candidateSubtree.warnings.map((warning) => `candidate_subtree: ${warning}`))
     }
 
     let cssGraph: CaptureBundleV0['cssGraph']
@@ -86,6 +91,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       cssGraph,
       shadowTopology,
       targetSubtree,
+      candidateSubtree,
       resourceGraph,
       timelineEvents: mergeReplayTimelineEvents(actionTimelineEvents, mutationTimelineEvents),
     })
@@ -113,6 +119,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       runtimeHints: runtime.runtimeHints,
       shadowTopology,
       targetSubtree,
+      candidateSubtree,
       nodeMapping,
       cssGraph,
       resourceGraph,

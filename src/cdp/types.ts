@@ -66,6 +66,7 @@ export interface CaptureBundleV0 {
   }
   shadowTopology?: ShadowTopologyV0
   targetSubtree?: TargetSubtreeV0
+  candidateSubtree?: TargetCandidateSubtreeV0
   nodeMapping?: NodeMappingResult
   cssGraph?: MatchedStyleGraphV0
   resourceGraph?: ResourceGraphV0
@@ -148,6 +149,7 @@ export interface ReplayCapsuleV0 {
     cssGraph?: MatchedStyleGraphV0
     shadowTopology?: ShadowTopologyV0
     targetSubtree?: TargetSubtreeV0
+    candidateSubtree?: TargetCandidateSubtreeV0
     resourceGraph?: ResourceGraphV0
   }
   timeline: ReplayTimelineV0
@@ -167,6 +169,17 @@ export interface TargetSubtreeV0 {
   textNodeCount: number
   textLength: number
   maxDepth: number
+  warnings?: string[]
+}
+
+export interface TargetCandidateSubtreeV0 {
+  html: string
+  source: 'normalized-subtree'
+  removedTagCounts: Record<string, number>
+  removedAttributeCounts: Record<string, number>
+  collapsedWrapperCount: number
+  nodeCount: number
+  textLength: number
   warnings?: string[]
 }
 

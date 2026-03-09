@@ -9,6 +9,7 @@ export interface BuildReplayCapsuleInput {
   cssGraph?: CaptureBundleV0['cssGraph']
   shadowTopology?: CaptureBundleV0['shadowTopology']
   targetSubtree?: CaptureBundleV0['targetSubtree']
+  candidateSubtree?: CaptureBundleV0['candidateSubtree']
   resourceGraph?: CaptureBundleV0['resourceGraph']
   timelineEvents?: ReplayTimelineEventV0[]
 }
@@ -34,6 +35,7 @@ export const buildReplayCapsule = (input: BuildReplayCapsuleInput): ReplayCapsul
   if (!input.cssGraph) missingArtifacts.push('cssGraph')
   if (!input.shadowTopology) missingArtifacts.push('shadowTopology')
   if (!input.targetSubtree) missingArtifacts.push('targetSubtree')
+  if (!input.candidateSubtree) missingArtifacts.push('candidateSubtree')
   if (!input.resourceGraph) missingArtifacts.push('resourceGraph')
 
   if (missingArtifacts.length > 0) warnings.push(`replay-capsule-missing-artifacts:${missingArtifacts.join(',')}`)
@@ -52,6 +54,7 @@ export const buildReplayCapsule = (input: BuildReplayCapsuleInput): ReplayCapsul
         cssGraph: input.cssGraph,
         shadowTopology: input.shadowTopology,
         targetSubtree: input.targetSubtree,
+        candidateSubtree: input.candidateSubtree,
         resourceGraph: input.resourceGraph,
       },
       timeline: {

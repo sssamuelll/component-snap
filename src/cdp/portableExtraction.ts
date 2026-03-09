@@ -195,6 +195,7 @@ export const extractPortableFromReplayCapsule = (
   const resourceGraph = replayCapsule.snapshot.resourceGraph
   const shadowTopology = replayCapsule.snapshot.shadowTopology
   const targetSubtree = replayCapsule.snapshot.targetSubtree || capture.targetSubtree
+  const candidateSubtree = replayCapsule.snapshot.candidateSubtree || capture.candidateSubtree
   const selectedSelector = pickSelector(capture, replayCapsule, fallbackSelector)
 
   if (!selectedSelector) {
@@ -232,7 +233,7 @@ export const extractPortableFromReplayCapsule = (
     ? `\n<script type="application/json" id="component-snap-shadow-topology">${escapeHtml(shadowMetadata)}</script>`
     : ''
 
-  const subtreeHtml = targetSubtree?.html?.trim()
+  const subtreeHtml = candidateSubtree?.html?.trim() || targetSubtree?.html?.trim()
   const html = subtreeHtml
     ? `${subtreeHtml}${shadowInfo}`
     : `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
@@ -243,6 +244,8 @@ export const extractPortableFromReplayCapsule = (
     `replay-capsule-shadow-roots:${shadowRootCount}`,
     ...asArray(replayCapsule.diagnostics?.warnings).map((warning) => `replay-capsule-diagnostics:${warning}`),
   ]
+  if (candidateSubtree?.html?.trim()) warnings.push('replay-capsule-candidate-subtree-used')
+  warnings.push(...asArray(candidateSubtree?.warnings).map((warning) => `replay-capsule-candidate-subtree:${warning}`))
 
   if (unresolvedRequiredAssets > 0) {
     warnings.push(`replay-capsule-required-assets-unresolved:${unresolvedRequiredAssets}`)

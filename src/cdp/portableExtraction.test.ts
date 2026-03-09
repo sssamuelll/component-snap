@@ -42,12 +42,22 @@ const baseReplayCapsule = (): ReplayCapsuleV0 => ({
     },
     targetSubtree: {
       source: 'runtime-object',
-      html: '<button class="cta"><span>Buy now</span></button>',
-      nodeCount: 2,
-      elementCount: 2,
+      html: '<rpl-tooltip data-csnap="1"><button class="cta"><span>Buy now</span></button></rpl-tooltip>',
+      nodeCount: 3,
+      elementCount: 3,
       textNodeCount: 1,
       textLength: 7,
-      maxDepth: 1,
+      maxDepth: 2,
+    },
+    candidateSubtree: {
+      source: 'normalized-subtree',
+      html: '<button class="cta"><span>Buy now</span></button>',
+      removedTagCounts: { 'rpl-tooltip': 1 },
+      removedAttributeCounts: { 'data-csnap': 1 },
+      collapsedWrapperCount: 1,
+      nodeCount: 2,
+      textLength: 7,
+      warnings: ['target-candidate-collapsed-wrappers:1', 'target-candidate-noise-attributes-removed'],
     },
     resourceGraph: {
       nodes: [{ id: 'doc', kind: 'document' }],
@@ -99,9 +109,11 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.artifacts.css).toContain('--brand: #f00')
     expect(result.artifacts.css).toContain('@keyframes pulse')
     expect(result.artifacts.html).toContain('<button class="cta"><span>Buy now</span></button>')
+    expect(result.artifacts.html).not.toContain('<rpl-tooltip')
     expect(result.artifacts.html).toContain('component-snap-shadow-topology')
     expect(result.diagnostics.source).toBe('replay-capsule')
     expect(result.diagnostics.warnings).toContain('replay-capsule-portable-extractor-used')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree-used')
     expect(result.diagnostics.confidence).toBeGreaterThan(0.4)
   })
 
@@ -118,7 +130,12 @@ describe('extractPortableFromReplayCapsule', () => {
 
   it('fails explicitly when capsule portable extraction collapses to an empty selector shell', () => {
     const capture = baseCapture()
-    if (capture.replayCapsule) capture.replayCapsule.snapshot.targetSubtree = undefined
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = undefined
+      capture.replayCapsule.snapshot.candidateSubtree = undefined
+    }
+    capture.targetSubtree = undefined
+    capture.candidateSubtree = undefined
     const result = extractPortableFromReplayCapsule(capture, '.fallback')
     expect(result.ok).toBe(false)
     if (result.ok) return
