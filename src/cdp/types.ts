@@ -1,0 +1,140 @@
+export type CaptureBackend = 'extension' | 'cdp'
+import type { NodeMappingResult, TargetFingerprint } from './nodeMappingTypes'
+
+export interface CaptureBoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+  dpr: number
+}
+
+export interface CaptureSeed {
+  requestId: string
+  tabId?: number
+  pageUrl: string
+  pageTitle: string
+  selectedSelector?: string
+  stableSelector?: string
+  boundingBox?: CaptureBoundingBox
+  elementHint?: {
+    tagName?: string
+    id?: string
+    classList?: string[]
+    textPreview?: string
+    kind?: string
+  }
+  targetFingerprint?: TargetFingerprint
+}
+
+export interface CaptureBundleV0 {
+  version: '0'
+  captureId: string
+  createdAt: string
+  backend: 'cdp'
+  seed: CaptureSeed
+  page: {
+    url: string
+    title: string
+    viewport: { width: number; height: number }
+    scroll: { x: number; y: number }
+    dpr: number
+    userAgent?: string
+    colorScheme?: 'light' | 'dark' | 'unknown'
+    language?: string
+  }
+  screenshot: {
+    fullPageDataUrl?: string
+    clipDataUrl?: string
+    clipRect?: CaptureBoundingBox
+  }
+  domSnapshot: {
+    raw?: unknown
+    stats?: {
+      documents: number
+      nodes: number
+      layouts?: number
+    }
+  }
+  runtimeHints: {
+    shadowDomPresent?: boolean
+    iframePresent?: boolean
+    canvasPresent?: boolean
+    webglPresent?: boolean
+  }
+  nodeMapping?: NodeMappingResult
+  cssGraph?: MatchedStyleGraphV0
+  debug?: {
+    warnings: string[]
+  }
+}
+
+export interface RuntimeEnvironmentCapture {
+  url: string
+  title: string
+  viewport: { width: number; height: number }
+  scroll: { x: number; y: number }
+  dpr: number
+  userAgent: string
+  colorScheme: 'light' | 'dark' | 'unknown'
+  language?: string
+  runtimeHints: CaptureBundleV0['runtimeHints']
+}
+
+export interface StyleDeclarationV0 {
+  name: string
+  value: string
+  important?: boolean
+  disabled?: boolean
+  implicit?: boolean
+}
+
+export interface StyleDeclarationBlockV0 {
+  declarations: StyleDeclarationV0[]
+}
+
+export interface MatchedRuleV0 {
+  origin?: 'regular' | 'user-agent' | 'injected' | 'inspector' | 'inline'
+  selectorList: string[]
+  stylesheet?: {
+    styleSheetId?: string
+    sourceURL?: string
+    isInline?: boolean
+    startLine?: number
+    startColumn?: number
+  }
+  media?: string[]
+  supports?: string[]
+  layer?: string
+  declarations: StyleDeclarationV0[]
+}
+
+export interface MatchedStyleGraphV0 {
+  target: {
+    nodeId?: number
+    backendNodeId?: number
+    selector?: string
+  }
+  inline?: StyleDeclarationBlockV0
+  matchedRules: MatchedRuleV0[]
+  computed?: Array<{ name: string; value: string }>
+  customProperties?: Array<{ name: string; value: string; source?: string }>
+  keyframes?: string[]
+  diagnostics?: {
+    stylesheetCount?: number
+    ruleCount?: number
+    computedCount?: number
+    inlineDeclarationCount?: number
+    customPropertyCount?: number
+    customPropertyReferenceCount?: number
+    customPropertyReferenceOnlyCount?: number
+    unresolvedCustomPropertyReferenceCount?: number
+    keyframeCount?: number
+    matchedRuleWithOriginCount?: number
+    matchedRuleWithoutOriginCount?: number
+    matchedRuleWithoutSelectorCount?: number
+    matchedRuleUserAgentCount?: number
+    matchedRuleWithIncompleteStylesheetMetadataCount?: number
+    warnings?: string[]
+  }
+}

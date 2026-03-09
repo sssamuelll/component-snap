@@ -11,6 +11,34 @@ type ElementSnap = {
   element?: {
     tag: string; id: string; classes: string[]; text: string; selector: string;
     selectedSelector?: string; html: string; css: string; freezeHtml: string; js: string; kind: string;
+    targetFingerprint?: {
+      stableSelector?: string
+      selectedSelector?: string
+      tagName: string
+      id?: string
+      classList: string[]
+      textPreview?: string
+      boundingBox: {
+        x: number
+        y: number
+        width: number
+        height: number
+      }
+      siblingIndex?: number
+      childCount?: number
+      attributeHints: Array<{ name: string; value: string }>
+      ancestry: Array<{
+        tagName: string
+        id?: string
+        classList: string[]
+        siblingIndex?: number
+      }>
+      shadowContext?: {
+        insideShadowRoot: boolean
+        shadowDepth: number
+        hostChain: string[]
+      }
+    }
   }
 }
 
@@ -49,6 +77,7 @@ const STYLE_PROPS = [
 ]
 
 const ALLOWED_ATTRS = new Set(['id', 'class', 'role', 'type', 'name', 'value', 'placeholder', 'href', 'src', 'alt', 'title', 'tabindex', 'for', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-haspopup', 'aria-selected', 'aria-checked', 'aria-hidden', 'viewbox', 'viewBox', 'd', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'xmlns', 'version', 'preserveaspectratio', 'preserveAspectRatio', 'xlink:href', 'href'])
+const ATTRIBUTE_HINT_NAMES = new Set(['id', 'role', 'type', 'name', 'placeholder', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-expanded', 'aria-selected', 'aria-checked', 'alt', 'title', 'href', 'src', 'data-testid', 'data-test'])
 
 const resolveUrl = (url: string) => {
   if (!url || url.startsWith('data:') || url.startsWith('http') || url.startsWith('//') || url.startsWith('#')) return url
@@ -364,6 +393,80 @@ if (!root) {
 }
 `
 
+const toCompactText = (value: string) => value.replace(/\s+/g, ' ').trim()
+
+const getSiblingIndex = (el: HTMLElement) => {
+  const parent = el.parentElement
+  if (!parent) return undefined
+  return Array.from(parent.children).indexOf(el)
+}
+
+const getAttributeHints = (el: HTMLElement) =>
+  Array.from(el.attributes)
+    .filter((attr) => ATTRIBUTE_HINT_NAMES.has(attr.name.toLowerCase()))
+    .slice(0, 12)
+    .map((attr) => ({ name: attr.name, value: toCompactText(attr.value).slice(0, 160) }))
+
+const getNodeSummary = (el: HTMLElement) => ({
+  tagName: el.tagName.toLowerCase(),
+  id: el.id || undefined,
+  classList: Array.from(el.classList).slice(0, 8),
+  siblingIndex: getSiblingIndex(el),
+})
+
+const getAncestrySummary = (el: HTMLElement) => {
+  const ancestry: ReturnType<typeof getNodeSummary>[] = []
+  let current: HTMLElement | null = el.parentElement
+  while (current && ancestry.length < 8) {
+    ancestry.push(getNodeSummary(current))
+    current = current.parentElement
+  }
+  return ancestry
+}
+
+const getShadowContext = (el: HTMLElement) => {
+  const hostChain: string[] = []
+  let shadowDepth = 0
+  let root: Node = el
+  while (true) {
+    const nextRoot = root.getRootNode()
+    if (!(nextRoot instanceof ShadowRoot) || !nextRoot.host) break
+    shadowDepth += 1
+    const host = nextRoot.host as HTMLElement
+    const descriptor = `${host.tagName.toLowerCase()}${host.id ? `#${host.id}` : ''}${host.classList.length ? `.${Array.from(host.classList).slice(0, 2).join('.')}` : ''}`
+    hostChain.push(descriptor)
+    root = host
+  }
+  return {
+    insideShadowRoot: shadowDepth > 0,
+    shadowDepth,
+    hostChain,
+  }
+}
+
+const buildTargetFingerprint = (target: HTMLElement) => {
+  const rect = target.getBoundingClientRect()
+  return {
+    stableSelector: buildStableSelector(target),
+    selectedSelector: buildStableSelector(target),
+    tagName: target.tagName.toLowerCase(),
+    id: target.id || undefined,
+    classList: Array.from(target.classList),
+    textPreview: toCompactText(target.textContent || '').slice(0, 300) || undefined,
+    boundingBox: {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    },
+    siblingIndex: getSiblingIndex(target),
+    childCount: target.children.length,
+    attributeHints: getAttributeHints(target),
+    ancestry: getAncestrySummary(target),
+    shadowContext: getShadowContext(target),
+  }
+}
+
 const ensureOverlay = () => {
   if (overlay) return overlay
   overlay = document.createElement('div'); overlay.id = '__component_snap_overlay__'
@@ -408,6 +511,7 @@ const onBlockerClick = async (event: MouseEvent) => {
   isProcessing = true; event.preventDefault(); event.stopImmediatePropagation()
   const target = getUnderlyingElement(event.clientX, event.clientY)
   if (!target) { isProcessing = false; return }
+  const targetFingerprint = buildTargetFingerprint(target)
   const captureRoot = findVisualRoot(target)
   const rect = captureRoot.getBoundingClientRect(), selector = buildStableSelector(captureRoot)
   const portable = await sanitizeSubtree(captureRoot, target)
@@ -418,6 +522,7 @@ const onBlockerClick = async (event: MouseEvent) => {
       text: (target.textContent || '').trim().slice(0, 300), selector, selectedSelector: portable.selectedSelector,
       html: portable.html, css: portable.css, freezeHtml: portable.html,
       js: buildComponentJs(portable.selectedSelector || selector), kind: classifyComponent(target),
+      targetFingerprint,
     },
   }
   chrome.runtime.sendMessage({ type: 'ELEMENT_SELECTED', requestId: currentRequestId, payload: snap, clipRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 } }, () => stopInspect())

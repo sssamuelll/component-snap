@@ -1,3 +1,7 @@
+import { runCDPCapture } from './cdp/orchestrator'
+import type { CaptureSeed } from './cdp/types'
+import type { TargetFingerprint } from './cdp/nodeMappingTypes'
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[component-snap] extension installed')
 })
@@ -17,6 +21,7 @@ type StoredPayload = {
   snappedAt?: string
   snapFolder?: string
   requestId?: string
+  cdpCapture?: unknown
   element?: {
     tag?: string
     id?: string
@@ -29,6 +34,7 @@ type StoredPayload = {
     js?: string
     kind?: string
     screenshotDataUrl?: string
+    targetFingerprint?: TargetFingerprint
   }
 }
 
@@ -89,6 +95,24 @@ const cropDataUrl = async (imageDataUrl: string, clipRect: ClipRect) => {
 const saveDataUrl = async (dataUrl: string, filename: string) => {
   await chrome.downloads.download({ url: dataUrl, filename, saveAs: false, conflictAction: 'uniquify' })
 }
+
+const buildCaptureSeed = (requestId: string, tabId: number | undefined, payload: StoredPayload, clipRect?: ClipRect): CaptureSeed => ({
+  requestId,
+  tabId,
+  pageUrl: payload.url,
+  pageTitle: payload.title,
+  stableSelector: payload.element?.targetFingerprint?.stableSelector || payload.element?.selector,
+  selectedSelector: payload.element?.targetFingerprint?.selectedSelector || payload.element?.selector,
+  boundingBox: clipRect,
+  elementHint: {
+    tagName: payload.element?.tag,
+    id: payload.element?.id,
+    classList: payload.element?.classes,
+    textPreview: payload.element?.text,
+    kind: payload.element?.kind,
+  },
+  targetFingerprint: payload.element?.targetFingerprint,
+})
 
 const saveSnapFiles = async (payload: StoredPayload) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
@@ -195,17 +219,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
       try {
+        const tabId = activeRequests.get(message.requestId)
+
         const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
         const cropped = await cropDataUrl(screenshot, message.clipRect)
         if (cropped) message.payload.element.screenshotDataUrl = cropped
 
-        const folder = await saveSnapFiles(message.payload)
+        let cdpCapture: unknown
+        if (tabId) {
+          try {
+            cdpCapture = await runCDPCapture(buildCaptureSeed(message.requestId, tabId, message.payload, message.clipRect))
+            log('cdp_capture_done', 'info', message.requestId)
+          } catch (error) {
+            log('cdp_capture_failed', 'error', message.requestId, String(error))
+          }
+        }
+
+        const enrichedPayload = {
+          ...message.payload,
+          cdpCapture,
+        }
+
+        const folder = await saveSnapFiles(enrichedPayload)
         
         await chrome.storage.local.clear()
         
         await chrome.storage.local.set({ 
           lastSelection: { 
-            ...message.payload, 
+            ...enrichedPayload, 
             snapFolder: folder, 
             requestId: message.requestId,
             snappedAt: new Date().toISOString()
