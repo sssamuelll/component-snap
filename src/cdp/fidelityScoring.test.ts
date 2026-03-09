@@ -188,6 +188,23 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.warnings).toContain('fidelity-portable-diagnostics:portable-fallback-no-keyframes-captured')
   })
 
+  it('hard-gates overall fidelity when portable output collapses to an empty shell', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        warnings: ['replay-capsule-empty-shell-export', 'replay-capsule-shadow-metadata-without-content'],
+        confidence: 0.12,
+        outputQuality: 'fragile',
+      },
+    })
+
+    expect(scoring.overall.score).toBeLessThanOrEqual(0.28)
+    expect(scoring.overall.confidence).toBeLessThanOrEqual(0.22)
+    expect(scoring.warnings).toContain('portable-output-empty-shell-gated')
+    expect(scoring.notes).toContain('portable-output-empty-shell-detected')
+  })
+
   it('uses measured pixel diff input to penalize visual fidelity', () => {
     const pixelDiff = {
       mismatchPixels: 100,

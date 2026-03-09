@@ -12,6 +12,7 @@ export interface FidelityPortableDiagnosticsInput {
   warnings?: string[]
   confidencePenalty?: number
   confidence?: number
+  outputQuality?: 'portable' | 'fragile'
 }
 
 export interface ScoreCaptureFidelityInput {
@@ -337,6 +338,10 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
     ...asArray(assetCompleteness.warnings),
     ...asArray(structuralConfidence.warnings),
   ])
+  const notes = [
+    'weights:visual=0.38,interaction=0.24,assets=0.20,structure=0.18',
+    'portable-diagnostics-adjust-overall-only',
+  ]
 
   if (input.portableDiagnostics) {
     const portable = input.portableDiagnostics
@@ -348,8 +353,9 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
           : overallScore,
     )
     const source = portable.source || 'portable-fallback'
+    const portableWarnings = asArray(portable.warnings)
     warnings.push(`fidelity-portable-source:${source}`)
-    warnings.push(...asArray(portable.warnings).map((warning) => `fidelity-portable-diagnostics:${warning}`))
+    warnings.push(...portableWarnings.map((warning) => `fidelity-portable-diagnostics:${warning}`))
 
     overallScore = overallScore * 0.85 + portableConfidence * 0.15
     overallConfidence = Math.min(overallConfidence, clamp(portableConfidence + 0.15))
@@ -358,12 +364,23 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
       overallScore = Math.min(overallScore, 0.82)
       overallConfidence = Math.min(overallConfidence, 0.8)
     }
-  }
 
-  const notes = [
-    'weights:visual=0.38,interaction=0.24,assets=0.20,structure=0.18',
-    'portable-diagnostics-adjust-overall-only',
-  ]
+    const hasEmptyShellFailure = portableWarnings.includes('replay-capsule-empty-shell-export')
+    const hasShadowMetadataWithoutContent = portableWarnings.includes('replay-capsule-shadow-metadata-without-content')
+    const outputQuality = portable.outputQuality || (hasEmptyShellFailure ? 'fragile' : undefined)
+
+    if (hasEmptyShellFailure || outputQuality === 'fragile') {
+      overallScore = Math.min(overallScore, 0.28)
+      overallConfidence = Math.min(overallConfidence, 0.22)
+      warnings.push('portable-output-empty-shell-gated')
+      notes.unshift('portable-output-empty-shell-detected')
+    } else if (hasShadowMetadataWithoutContent || portableConfidence < 0.25) {
+      overallScore = Math.min(overallScore, 0.42)
+      overallConfidence = Math.min(overallConfidence, 0.35)
+      warnings.push('portable-output-fragile-gated')
+      notes.unshift('portable-output-fragile-detected')
+    }
+  }
 
   if (!input.pixelDiff) notes.unshift('heuristic-score-no-pixel-diff')
 

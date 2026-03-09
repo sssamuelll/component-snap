@@ -8,6 +8,7 @@ export interface PortableExportDiagnostics {
   warnings: string[]
   confidence: number
   confidencePenalty: number
+  outputQuality?: 'portable' | 'fragile'
 }
 
 export interface PortableExportArtifacts {
@@ -166,6 +167,21 @@ const getRequiredUnresolvedAssetCount = (resourceGraph: ResourceGraphV0 | undefi
 const hasAnyUsableRule = (rules: MatchedRuleV0[] | undefined) =>
   asArray(rules).some((rule) => rule.selectorList?.length && asArray(rule.declarations).some((declaration) => !declaration.disabled))
 
+const analyzePortableHtml = (html: string) => {
+  const withoutScripts = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').trim()
+  const elementTags = withoutScripts.match(/<([a-zA-Z][^\s/>]*)\b[^>]*>/g) || []
+  const closingTags = withoutScripts.match(/<\/([a-zA-Z][^\s/>]*)>/g) || []
+  const textLength = withoutScripts.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length
+  const renderedElementCount = Math.max(0, elementTags.length)
+  const hasOnlyRootShell = renderedElementCount <= 1 && closingTags.length <= 1 && textLength === 0
+
+  return {
+    renderedElementCount,
+    textLength,
+    hasOnlyRootShell,
+  }
+}
+
 export const extractPortableFromReplayCapsule = (
   capture: CaptureBundleV0 | undefined,
   fallbackSelector?: string,
@@ -216,6 +232,7 @@ export const extractPortableFromReplayCapsule = (
     : ''
 
   const html = `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
+  const htmlAnalysis = analyzePortableHtml(html)
 
   const warnings = [
     'replay-capsule-portable-extractor-used',
@@ -223,11 +240,26 @@ export const extractPortableFromReplayCapsule = (
     ...asArray(replayCapsule.diagnostics?.warnings).map((warning) => `replay-capsule-diagnostics:${warning}`),
   ]
 
+  if (unresolvedRequiredAssets > 0) {
+    warnings.push(`replay-capsule-required-assets-unresolved:${unresolvedRequiredAssets}`)
+  }
+
+  if (htmlAnalysis.hasOnlyRootShell) {
+    warnings.push('replay-capsule-empty-shell-export')
+    warnings.push(`replay-capsule-rendered-elements:${htmlAnalysis.renderedElementCount}`)
+    warnings.push(`replay-capsule-rendered-text-length:${htmlAnalysis.textLength}`)
+    if (shadowRootCount > 0) warnings.push('replay-capsule-shadow-metadata-without-content')
+    return {
+      ok: false,
+      reason: 'empty-shell-export',
+      warnings,
+    }
+  }
+
   let confidencePenalty = 0.14
 
   if (shadowRootCount > 0) confidencePenalty += 0.06
   if (unresolvedRequiredAssets > 0) {
-    warnings.push(`replay-capsule-required-assets-unresolved:${unresolvedRequiredAssets}`)
     confidencePenalty += Math.min(0.35, unresolvedRequiredAssets * 0.08)
   }
   if (asArray(cssGraph.keyframes).length === 0) {
@@ -261,6 +293,7 @@ export const extractPortableFromReplayCapsule = (
       warnings,
       confidencePenalty,
       confidence,
+      outputQuality: 'portable',
     },
   }
 }

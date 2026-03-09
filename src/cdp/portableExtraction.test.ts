@@ -79,21 +79,14 @@ const baseCapture = (): CaptureBundleV0 => ({
 })
 
 describe('extractPortableFromReplayCapsule', () => {
-  it('builds capsule-driven portable artifacts with cssGraph/resourceGraph/shadowTopology', () => {
+  it('fails explicitly when capsule portable extraction collapses to an empty selector shell', () => {
     const result = extractPortableFromReplayCapsule(baseCapture(), '.fallback')
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
+    expect(result.ok).toBe(false)
+    if (result.ok) return
 
-    expect(result.tier).toBe('capsule')
-    expect(result.artifacts.selectedSelector).toBe('.cta')
-    expect(result.artifacts.css).toContain('.cta, button.cta')
-    expect(result.artifacts.css).toContain('--brand: #f00')
-    expect(result.artifacts.css).toContain('@keyframes pulse')
-    expect(result.artifacts.html).toContain('data-csnap-capsule-root="true"')
-    expect(result.artifacts.html).toContain('component-snap-shadow-topology')
-    expect(result.diagnostics.source).toBe('replay-capsule')
-    expect(result.diagnostics.warnings).toContain('replay-capsule-portable-extractor-used')
-    expect(result.diagnostics.confidence).toBeGreaterThan(0.4)
+    expect(result.reason).toBe('empty-shell-export')
+    expect(result.warnings).toContain('replay-capsule-empty-shell-export')
+    expect(result.warnings).toContain('replay-capsule-shadow-metadata-without-content')
   })
 
   it('returns explicit failure for missing css graph to trigger fallback', () => {
@@ -107,7 +100,7 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.warnings).toContain('replay-capsule-css-graph-missing')
   })
 
-  it('adds diagnostics warnings for unresolved required assets', () => {
+  it('preserves unresolved-asset warnings when capsule export collapses and must fall back', () => {
     const capture = baseCapture()
     if (capture.replayCapsule?.snapshot.resourceGraph?.bundler?.assets) {
       capture.replayCapsule.snapshot.resourceGraph.bundler.assets.push({
@@ -119,9 +112,9 @@ describe('extractPortableFromReplayCapsule', () => {
     }
 
     const result = extractPortableFromReplayCapsule(capture, '.fallback')
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.diagnostics.warnings).toContain('replay-capsule-required-assets-unresolved:1')
-    expect(result.diagnostics.confidence).toBeLessThan(0.8)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.warnings).toContain('replay-capsule-required-assets-unresolved:1')
+    expect(result.warnings).toContain('replay-capsule-empty-shell-export')
   })
 })
