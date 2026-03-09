@@ -3,6 +3,7 @@ import { captureCSSProvenanceGraph } from './cssCapture'
 import { captureDomSnapshot } from './domSnapshotCapture'
 import { mapTargetToCDPNode } from './nodeMapping'
 import { captureScreenshots } from './pageCapture'
+import { buildReplayCapsule } from './replayCapsule'
 import { buildResourceGraph } from './resourceGraph'
 import { captureRuntimeEnvironment } from './runtimeCapture'
 import { captureShadowTopology } from './shadowTopology'
@@ -18,6 +19,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
 
   await client.attach()
   try {
+    const createdAt = new Date().toISOString()
     const runtime = await captureRuntimeEnvironment(client)
     const screenshot = await captureScreenshots(client, seed.boundingBox)
     const domSnapshot = await captureDomSnapshot(client)
@@ -51,11 +53,33 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     })
     const resourceGraph = resourceGraphCapture.resourceGraph
     warnings.push(...resourceGraphCapture.warnings.map((warning) => `resource_graph: ${warning}`))
+    const replayCapsuleCapture = buildReplayCapsule({
+      createdAt,
+      page: {
+        url: runtime.url,
+        title: runtime.title,
+        viewport: runtime.viewport,
+        scroll: runtime.scroll,
+        dpr: runtime.dpr,
+        userAgent: runtime.userAgent,
+        colorScheme: runtime.colorScheme,
+        language: runtime.language,
+      },
+      screenshot,
+      domSnapshot,
+      nodeMapping,
+      cssGraph,
+      shadowTopology,
+      resourceGraph,
+      timelineEvents: [],
+    })
+    const replayCapsule = replayCapsuleCapture.replayCapsule
+    warnings.push(...replayCapsuleCapture.warnings.map((warning) => `replay_capsule: ${warning}`))
 
     return {
       version: '0',
       captureId: createCaptureId(),
-      createdAt: new Date().toISOString(),
+      createdAt,
       backend: 'cdp',
       seed,
       page: {
@@ -75,6 +99,7 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
       nodeMapping,
       cssGraph,
       resourceGraph,
+      replayCapsule,
       debug: { warnings },
     }
   } catch (error) {

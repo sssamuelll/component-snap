@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
   const captureCSSProvenanceGraph = vi.fn()
   const captureShadowTopology = vi.fn()
   const buildResourceGraph = vi.fn()
+  const buildReplayCapsule = vi.fn()
   return {
     attach,
     detach,
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => {
     captureCSSProvenanceGraph,
     captureShadowTopology,
     buildResourceGraph,
+    buildReplayCapsule,
   }
 })
 
@@ -60,6 +62,10 @@ vi.mock('./shadowTopology', () => ({
 
 vi.mock('./resourceGraph', () => ({
   buildResourceGraph: mocks.buildResourceGraph,
+}))
+
+vi.mock('./replayCapsule', () => ({
+  buildReplayCapsule: mocks.buildReplayCapsule,
 }))
 
 import { runCDPCapture } from './orchestrator'
@@ -116,6 +122,43 @@ describe('runCDPCapture css integration', () => {
       },
       warnings: [],
     })
+    mocks.buildReplayCapsule.mockReturnValue({
+      replayCapsule: {
+        version: '0',
+        mode: 'snapshot-first',
+        createdAt: '2026-03-09T12:00:00.000Z',
+        snapshot: {
+          page: {
+            url: 'https://example.com',
+            title: 'Example',
+            viewport: { width: 1200, height: 800 },
+            scroll: { x: 0, y: 10 },
+            dpr: 2,
+            userAgent: 'ua',
+            colorScheme: 'light',
+            language: 'en',
+          },
+          screenshot: {
+            fullPageDataUrl: 'data:image/png;base64,abc',
+          },
+          domSnapshot: {
+            raw: { documents: [] },
+            stats: { documents: 0, nodes: 0 },
+          },
+          resourceGraph: {
+            nodes: [{ id: 'res_0', kind: 'document', source: 'capture', label: 'document' }],
+            edges: [],
+          },
+        },
+        timeline: {
+          events: [],
+        },
+        diagnostics: {
+          timelineEventCount: 0,
+        },
+      },
+      warnings: ['replay-capsule-empty-timeline'],
+    })
   })
 
   it('attaches cssGraph when node mapping resolves a nodeId', async () => {
@@ -143,6 +186,8 @@ describe('runCDPCapture css integration', () => {
     expect(bundle.cssGraph?.target.nodeId).toBe(44)
     expect(bundle.shadowTopology?.diagnostics?.totalShadowRoots).toBe(0)
     expect(bundle.resourceGraph?.nodes[0]?.kind).toBe('document')
+    expect(bundle.replayCapsule?.mode).toBe('snapshot-first')
+    expect((bundle.debug?.warnings || []).join(' ')).toContain('replay_capsule: replay-capsule-empty-timeline')
   })
 
   it('fails soft with warning when node mapping is unresolved', async () => {
@@ -198,5 +243,48 @@ describe('runCDPCapture css integration', () => {
     const bundle = await runCDPCapture(createSeed())
     expect(bundle.resourceGraph?.nodes).toHaveLength(1)
     expect((bundle.debug?.warnings || []).join(' ')).toContain('resource_graph: resource-graph-empty')
+  })
+
+  it('passes through replay capsule warnings as debug warnings', async () => {
+    mocks.mapTargetToCDPNode.mockResolvedValue({
+      resolved: false,
+      confidence: 0.1,
+      strategy: 'unresolved',
+      evidence: ['none'],
+    })
+    mocks.buildReplayCapsule.mockReturnValue({
+      replayCapsule: {
+        version: '0',
+        mode: 'snapshot-first',
+        createdAt: '2026-03-09T12:00:00.000Z',
+        snapshot: {
+          page: {
+            url: 'https://example.com',
+            title: 'Example',
+            viewport: { width: 1200, height: 800 },
+            scroll: { x: 0, y: 10 },
+            dpr: 2,
+            userAgent: 'ua',
+            colorScheme: 'light',
+            language: 'en',
+          },
+          screenshot: {},
+          domSnapshot: {},
+        },
+        timeline: { events: [] },
+        diagnostics: {
+          missingArtifacts: ['resourceGraph'],
+          timelineEventCount: 0,
+          warnings: ['replay-capsule-missing-artifacts:resourceGraph', 'replay-capsule-empty-timeline'],
+        },
+      },
+      warnings: ['replay-capsule-missing-artifacts:resourceGraph', 'replay-capsule-empty-timeline'],
+    })
+
+    const bundle = await runCDPCapture(createSeed())
+    expect(bundle.replayCapsule?.diagnostics?.missingArtifacts).toEqual(['resourceGraph'])
+    expect((bundle.debug?.warnings || []).join(' ')).toContain(
+      'replay_capsule: replay-capsule-missing-artifacts:resourceGraph',
+    )
   })
 })

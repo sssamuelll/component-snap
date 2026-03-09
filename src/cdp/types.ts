@@ -66,8 +66,44 @@ export interface CaptureBundleV0 {
   nodeMapping?: NodeMappingResult
   cssGraph?: MatchedStyleGraphV0
   resourceGraph?: ResourceGraphV0
+  replayCapsule?: ReplayCapsuleV0
   debug?: {
     warnings: string[]
+  }
+}
+
+export type ReplayTimelineEventKindV0 = 'action' | 'mutation'
+
+export interface ReplayTimelineEventV0 {
+  kind: ReplayTimelineEventKindV0
+  atMs: number
+  targetNodeId?: number
+  label?: string
+  payload?: Record<string, unknown>
+}
+
+export interface ReplayTimelineV0 {
+  events: ReplayTimelineEventV0[]
+}
+
+export interface ReplayCapsuleV0 {
+  version: '0'
+  mode: 'snapshot-first'
+  createdAt: string
+  snapshot: {
+    page: CaptureBundleV0['page']
+    screenshot: CaptureBundleV0['screenshot']
+    domSnapshot: CaptureBundleV0['domSnapshot']
+    nodeMapping?: NodeMappingResult
+    cssGraph?: MatchedStyleGraphV0
+    shadowTopology?: ShadowTopologyV0
+    resourceGraph?: ResourceGraphV0
+  }
+  timeline: ReplayTimelineV0
+  diagnostics?: {
+    missingArtifacts?: string[]
+    timelineEventCount?: number
+    warnings?: string[]
   }
 }
 
