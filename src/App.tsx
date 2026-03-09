@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import type { CaptureBundleV0 } from './cdp/types'
+import ReplayViewer from './replay/viewer/ReplayViewer'
 import './App.css'
 
 type SnapData = {
@@ -6,6 +8,7 @@ type SnapData = {
   url: string
   selection: string
   snapFolder?: string
+  cdpCapture?: CaptureBundleV0
   element?: {
     tag: string
     id: string
@@ -126,6 +129,10 @@ function App() {
           )}
 
           <pre>{snap.element?.text || snap.selection || 'No text found.'}</pre>
+
+          {snap.cdpCapture?.replayCapsule && (
+            <ReplayViewer replayCapsule={snap.cdpCapture.replayCapsule} captureSeed={snap.cdpCapture.seed} />
+          )}
         </section>
       )}
 

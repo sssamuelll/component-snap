@@ -1,0 +1,83 @@
+.replay-viewer {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.replay-viewer h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.replay-viewer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.replay-viewer-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.replay-viewer-controls button {
+  background: #1f2937;
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.replay-viewer-controls button.is-active {
+  background: #0f766e;
+}
+
+.replay-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.replay-image {
+  display: block;
+  transform-origin: top left;
+}
+
+.replay-spotlight {
+  position: absolute;
+  border: 2px solid #f97316;
+  box-shadow: 0 0 0 999px rgba(15, 23, 42, 0.5);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.replay-warnings {
+  margin: 0;
+  padding-left: 16px;
+  color: #9a3412;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.replay-metadata {
+  display: grid;
+  gap: 3px;
+}
+
+.replay-metadata small {
+  color: #475569;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.replay-viewer-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
