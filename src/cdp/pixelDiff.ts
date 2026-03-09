@@ -34,7 +34,12 @@ const padImageToSize = (
   if (image.width === size.width && image.height === size.height) return image
 
   const padded = new PNG({ width: size.width, height: size.height })
-  image.data.copy(padded.data, 0, 0, image.data.length)
+  for (let y = 0; y < image.height; y++) {
+    const sourceStart = y * image.width * 4
+    const sourceEnd = sourceStart + image.width * 4
+    const targetStart = y * size.width * 4
+    image.data.copy(padded.data, targetStart, sourceStart, sourceEnd)
+  }
   return padded
 }
 
@@ -45,7 +50,7 @@ export const comparePixelDiff = (input: ComparePixelDiffInput): ComparePixelDiff
     width: Math.max(baseline.width, candidate.width),
     height: Math.max(baseline.height, candidate.height),
   }
-  const diff = new PNG(comparedDimensions)
+  const diff = new PNG({ width: comparedDimensions.width, height: comparedDimensions.height })
   const mismatchPixels = pixelmatch(
     padImageToSize(baseline, comparedDimensions).data,
     padImageToSize(candidate, comparedDimensions).data,
@@ -61,10 +66,7 @@ export const comparePixelDiff = (input: ComparePixelDiffInput): ComparePixelDiff
     mismatchPixels,
     mismatchRatio: totalPixels > 0 ? clamp(mismatchPixels / totalPixels) : 0,
     dimensionsMatch: baseline.width === candidate.width && baseline.height === candidate.height,
-    comparedDimensions: {
-      width: comparedDimensions.width,
-      height: comparedDimensions.height,
-    },
+    comparedDimensions: { width: comparedDimensions.width, height: comparedDimensions.height },
     baselineDimensions: { width: baseline.width, height: baseline.height },
     candidateDimensions: { width: candidate.width, height: candidate.height },
     diffPngBuffer,

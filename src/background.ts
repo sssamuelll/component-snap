@@ -1,5 +1,6 @@
 import { runCDPCapture } from './cdp/orchestrator'
 import { scoreCaptureFidelity } from './cdp/fidelityScoring'
+import { buildFidelityExport } from './cdp/fidelityReporting'
 import { extractPortableFromReplayCapsule } from './cdp/portableExtraction'
 import type { ActionTraceEventV0, CaptureBundleV0, CaptureSeed, FidelityScoringV0, MutationTraceEventV0 } from './cdp/types'
 import type { TargetFingerprint } from './cdp/nodeMappingTypes'
@@ -151,6 +152,9 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   const portableCss = payload.element?.css || '/* no css captured */'
   const freezeHtml = payload.element?.freezeHtml || portableHtml
   const js = payload.element?.js || "console.log('[component-snap] no js captured')"
+  const fidelityExport = payload.exportDiagnostics?.fidelity
+    ? buildFidelityExport(payload.exportDiagnostics.fidelity)
+    : undefined
   const metaPayload: StoredPayload = {
     ...payload,
     exportMode: 'replay-first-capture-with-portable-fallback-export',
@@ -163,7 +167,15 @@ const saveSnapFiles = async (payload: StoredPayload) => {
       fidelity: payload.exportDiagnostics?.fidelity,
     },
   }
-  const meta = JSON.stringify(metaPayload, null, 2)
+  const meta = JSON.stringify(
+    {
+      ...metaPayload,
+      fidelity: fidelityExport?.meta,
+      reports: fidelityExport ? { fidelitySummary: './fidelity-report.txt' } : undefined,
+    },
+    null,
+    2,
+  )
 
   const htmlDoc = (htmlBody: string, cssPath: string, jsPath: string) => `<!doctype html>
 <html lang="en">
@@ -201,6 +213,9 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   await saveDataUrl(toDataUrlFromText(freezeDoc, 'text/html;charset=utf-8'), `${folder}/snapshot.html`)
 
   await saveDataUrl(toDataUrlFromText(meta, 'application/json;charset=utf-8'), `${folder}/meta.json`)
+  if (fidelityExport) {
+    await saveDataUrl(toDataUrlFromText(fidelityExport.report, 'text/plain;charset=utf-8'), `${folder}/fidelity-report.txt`)
+  }
 
   if (payload.element?.screenshotDataUrl) {
     await saveDataUrl(payload.element.screenshotDataUrl, `${folder}/screenshot.png`)
