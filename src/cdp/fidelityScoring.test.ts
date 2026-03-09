@@ -187,4 +187,25 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.warnings).toContain('fidelity-portable-source:portable-fallback')
     expect(scoring.warnings).toContain('fidelity-portable-diagnostics:portable-fallback-no-keyframes-captured')
   })
+
+  it('uses measured pixel diff input to penalize visual fidelity', () => {
+    const pixelDiff = {
+      mismatchPixels: 100,
+      mismatchRatio: 0.5,
+      dimensionsMatch: true,
+      comparedDimensions: { width: 20, height: 10 },
+      baselineDimensions: { width: 20, height: 10 },
+      candidateDimensions: { width: 20, height: 10 },
+    }
+
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      pixelDiff,
+    })
+
+    expect(scoring.pixelDiff).toEqual(pixelDiff)
+    expect(scoring.dimensions.visual.score).toBeLessThan(0.8)
+    expect(scoring.warnings).toContain('visual-pixel-diff-high-mismatch')
+    expect(scoring.notes).not.toContain('heuristic-score-no-pixel-diff')
+  })
 })

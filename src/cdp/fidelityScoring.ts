@@ -1,4 +1,11 @@
-import type { CaptureBundleV0, FidelityDimensionScoreV0, FidelityScoringV0, ReplayTimelineEventV0, ResourceGraphV0 } from './types'
+import type {
+  CaptureBundleV0,
+  FidelityDimensionScoreV0,
+  FidelityScoringV0,
+  PixelDiffMetricsV0,
+  ReplayTimelineEventV0,
+  ResourceGraphV0,
+} from './types'
 
 export interface FidelityPortableDiagnosticsInput {
   source?: 'replay-capsule' | 'portable-fallback'
@@ -10,6 +17,7 @@ export interface FidelityPortableDiagnosticsInput {
 export interface ScoreCaptureFidelityInput {
   capture?: CaptureBundleV0
   portableDiagnostics?: FidelityPortableDiagnosticsInput
+  pixelDiff?: PixelDiffMetricsV0
 }
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value))
@@ -20,7 +28,10 @@ const asArray = <T>(value: T[] | undefined | null): T[] => (Array.isArray(value)
 
 const uniq = (values: string[]) => Array.from(new Set(values.filter(Boolean)))
 
-const buildVisualScore = (capture: CaptureBundleV0 | undefined): FidelityDimensionScoreV0 => {
+const buildVisualScore = (
+  capture: CaptureBundleV0 | undefined,
+  pixelDiff: PixelDiffMetricsV0 | undefined,
+): FidelityDimensionScoreV0 => {
   const replay = capture?.replayCapsule
   const screenshot = replay?.snapshot.screenshot || capture?.screenshot
   const cssGraph = replay?.snapshot.cssGraph || capture?.cssGraph
@@ -91,6 +102,22 @@ const buildVisualScore = (capture: CaptureBundleV0 | undefined): FidelityDimensi
     score -= 0.08
     confidence -= 0.1
     warnings.push('visual-css-provenance-degraded')
+  }
+
+  if (pixelDiff) {
+    const parityScore = 1 - clamp(pixelDiff.mismatchRatio)
+    score = score * 0.45 + parityScore * 0.55
+    confidence += 0.24
+    evidence.push(`visual-pixel-diff-pixels:${pixelDiff.mismatchPixels}`)
+    evidence.push(`visual-pixel-diff-ratio:${round3(pixelDiff.mismatchRatio)}`)
+
+    if (!pixelDiff.dimensionsMatch) {
+      warnings.push('visual-pixel-diff-dimensions-mismatch')
+      score -= 0.08
+    }
+
+    if (pixelDiff.mismatchRatio > 0.15) warnings.push('visual-pixel-diff-high-mismatch')
+    else if (pixelDiff.mismatchRatio > 0) warnings.push('visual-pixel-diff-nonzero-mismatch')
   }
 
   return {
@@ -288,7 +315,7 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
   const timelineEvents = asArray(replay?.timeline?.events)
   const resourceGraph = replay?.snapshot.resourceGraph || capture?.resourceGraph
 
-  const visual = buildVisualScore(capture)
+  const visual = buildVisualScore(capture, input.pixelDiff)
   const interaction = buildInteractionScore(timelineEvents)
   const assetCompleteness = buildAssetScore(resourceGraph)
   const structuralConfidence = buildStructuralScore(capture)
@@ -334,10 +361,11 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
   }
 
   const notes = [
-    'heuristic-score-no-pixel-diff',
     'weights:visual=0.38,interaction=0.24,assets=0.20,structure=0.18',
     'portable-diagnostics-adjust-overall-only',
   ]
+
+  if (!input.pixelDiff) notes.unshift('heuristic-score-no-pixel-diff')
 
   return {
     version: '0',
@@ -352,6 +380,7 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
       assetCompleteness,
       structuralConfidence,
     },
+    pixelDiff: input.pixelDiff,
     warnings: uniq(warnings),
     notes,
   }

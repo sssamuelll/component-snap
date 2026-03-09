@@ -164,6 +164,24 @@ export interface FidelityDimensionScoreV0 {
   warnings?: string[]
 }
 
+export interface PixelDiffMetricsV0 {
+  mismatchPixels: number
+  mismatchRatio: number
+  dimensionsMatch: boolean
+  comparedDimensions: {
+    width: number
+    height: number
+  }
+  baselineDimensions: {
+    width: number
+    height: number
+  }
+  candidateDimensions: {
+    width: number
+    height: number
+  }
+}
+
 export interface FidelityScoringV0 {
   version: '0'
   computedAt: string
@@ -177,6 +195,7 @@ export interface FidelityScoringV0 {
     assetCompleteness: FidelityDimensionScoreV0
     structuralConfidence: FidelityDimensionScoreV0
   }
+  pixelDiff?: PixelDiffMetricsV0
   warnings: string[]
   notes: string[]
 }
