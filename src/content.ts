@@ -83,8 +83,24 @@ const TRACEABLE_MUTATION_ATTRS = new Set([
   'data-state',
 ])
 
+const SCENE_TAG_NAMES = new Set(['piece', 'square', 'coord', 'coords', 'cg-board', 'cg-container', 'cg-wrap'])
+const SCENE_CLASS_TOKENS = ['board', 'puzzle__board', 'main-board', 'cg-wrap', 'overlay', 'coords']
+
 const findVisualRoot = (target: HTMLElement) => {
   let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
+  const hasSceneMarkers = (el: HTMLElement) => {
+    const tag = el.tagName.toLowerCase()
+    const cls = (el.className?.toString() || '').toLowerCase()
+    return SCENE_TAG_NAMES.has(tag) || SCENE_CLASS_TOKENS.some((token) => cls.includes(token))
+  }
+  const isSceneTarget = (() => {
+    let curr: HTMLElement | null = target
+    for (let depth = 0; depth < 8 && curr && curr !== document.body; depth++) {
+      if (hasSceneMarkers(curr)) return true
+      curr = curr.parentElement
+    }
+    return false
+  })()
   const getScore = (el: HTMLElement) => {
     const cls = (el.className?.toString() || '').toLowerCase(), tag = el.tagName.toLowerCase(), style = window.getComputedStyle(el), box = el.getBoundingClientRect(), area = Math.max(1, box.width * box.height), areaRatio = area / vArea
     if (areaRatio > 0.95) return -1000
@@ -92,7 +108,14 @@ const findVisualRoot = (target: HTMLElement) => {
     const isS = cls.includes('container') || tag.includes('container') || cls.includes('wrapper') || cls.includes('rnnxgb') || cls.includes('pill') || cls.includes('shell') || tag === 'header' || tag === 'nav' || tag === 'form' || cls.includes('header') || tag === 'shreddit-app'
     const isC = cls.includes('search') || cls.includes('board') || cls.includes('card') || tag.includes('board') || cls.includes('menu') || cls.includes('bar')
     const hasRich = el.parentElement && Array.from(el.parentElement.children).some(s => ['svg', 'canvas', 'piece', 'button', 'input', 'img'].includes(s.tagName.toLowerCase()))
+    const sceneTagged = hasSceneMarkers(el)
+    const sceneContainer = sceneTagged && (tag === 'cg-container' || tag === 'cg-wrap' || cls.includes('puzzle__board') || cls.includes('main-board'))
     let score = (hasS ? 60 : 0) + (hasR ? 40 : 0) + (hasBg ? 15 : 0) + (hasS && hasR ? 100 : 0) + (isS ? 150 : 0) + (isC ? 80 : 0) + (hasRich ? 60 : 0)
+    if (isSceneTarget) {
+      score += sceneTagged ? 140 : 0
+      score += sceneContainer ? 180 : 0
+      score -= tag === 'piece' || tag === 'square' || tag === 'coord' ? 120 : 0
+    }
     if (areaRatio > 0.8) score -= 300
     return score
   }
