@@ -266,7 +266,26 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.overall.score).toBeLessThan(0.83)
     expect(scoring.overall.confidence).toBeLessThanOrEqual(0.8)
     expect(scoring.warnings).toContain('fidelity-portable-source:portable-fallback')
+    expect(scoring.warnings).toContain('fidelity-target-class:semantic-ui')
+    expect(scoring.warnings).toContain('fidelity-export-mode:semantic-ui-portable')
     expect(scoring.warnings).toContain('fidelity-portable-diagnostics:portable-fallback-no-keyframes-captured')
+  })
+
+  it('surfaces render-scene target class and export mode in fidelity diagnostics', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'render-scene',
+        exportMode: 'render-scene-freeze',
+        warnings: ['replay-capsule-target-class:render-scene'],
+        confidence: 0.72,
+      },
+    })
+
+    expect(scoring.warnings).toContain('fidelity-target-class:render-scene')
+    expect(scoring.warnings).toContain('fidelity-export-mode:render-scene-freeze')
+    expect(scoring.notes).toContain('render-scene-target-detected')
   })
 
   it('hard-gates overall fidelity when portable output collapses to an empty shell', () => {

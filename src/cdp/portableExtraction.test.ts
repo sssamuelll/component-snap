@@ -238,7 +238,11 @@ describe('extractPortableFromReplayCapsule', () => {
 
     expect(result.artifacts.html).toContain('<cg-board class="cg-board"')
     expect(result.artifacts.html).toContain('<piece class="white king"')
+    expect(result.diagnostics.targetClass).toBe('render-scene')
+    expect(result.diagnostics.exportMode).toBe('render-scene-freeze')
     expect(result.diagnostics.warnings).toContain('replay-capsule-scene-preserving-subtree-used')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-class:render-scene')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-export-mode:render-scene-freeze')
     expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-reconstruction:scene-preserving')
   })
 })

@@ -2,9 +2,13 @@ import { buildPortableFallbackComponentJs } from '../portableFallback/extractor'
 import type { CaptureBundleV0, MatchedRuleV0, ReplayCapsuleV0, ResourceGraphV0, ShadowTopologyV0, StyleDeclarationV0 } from './types'
 
 type PortableExportSource = 'replay-capsule' | 'portable-fallback'
+type PortableTargetClass = 'semantic-ui' | 'render-scene'
+type PortableExportMode = 'semantic-ui-portable' | 'render-scene-freeze'
 
 export interface PortableExportDiagnostics {
   source: PortableExportSource
+  targetClass: PortableTargetClass
+  exportMode: PortableExportMode
   warnings: string[]
   confidence: number
   confidencePenalty: number
@@ -167,6 +171,21 @@ const getRequiredUnresolvedAssetCount = (resourceGraph: ResourceGraphV0 | undefi
 const hasAnyUsableRule = (rules: MatchedRuleV0[] | undefined) =>
   asArray(rules).some((rule) => rule.selectorList?.length && asArray(rule.declarations).some((declaration) => !declaration.disabled))
 
+const getPortableTargetClass = (candidateSubtree: CaptureBundleV0['candidateSubtree'], targetSubtree: CaptureBundleV0['targetSubtree']): PortableTargetClass => {
+  if (candidateSubtree?.quality?.profile === 'scene-like') return 'render-scene'
+  if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') return 'render-scene'
+  if (asArray(candidateSubtree?.warnings).some((warning) => warning.includes('scene-like') || warning.includes('scene-preserving'))) {
+    return 'render-scene'
+  }
+  if (asArray(targetSubtree?.warnings).some((warning) => warning.includes('scene'))) return 'render-scene'
+  return 'semantic-ui'
+}
+
+const getPortableExportMode = (targetClass: PortableTargetClass, source: PortableExportSource): PortableExportMode => {
+  if (targetClass === 'render-scene') return 'render-scene-freeze'
+  return 'semantic-ui-portable'
+}
+
 const analyzePortableHtml = (html: string) => {
   const withoutScripts = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').trim()
   const elementTags = withoutScripts.match(/<([a-zA-Z][^\s/>]*)\b[^>]*>/g) || []
@@ -233,6 +252,9 @@ export const extractPortableFromReplayCapsule = (
     ? `\n<script type="application/json" id="component-snap-shadow-topology">${escapeHtml(shadowMetadata)}</script>`
     : ''
 
+  const targetClass = getPortableTargetClass(candidateSubtree, targetSubtree)
+  const exportMode = getPortableExportMode(targetClass, 'replay-capsule')
+
   const subtreeHtml = candidateSubtree?.html?.trim() || targetSubtree?.html?.trim()
   const html = subtreeHtml
     ? `${subtreeHtml}${shadowInfo}`
@@ -249,6 +271,8 @@ export const extractPortableFromReplayCapsule = (
     warnings.push('replay-capsule-scene-preserving-subtree-used')
   }
   warnings.push(...asArray(candidateSubtree?.warnings).map((warning) => `replay-capsule-candidate-subtree:${warning}`))
+  warnings.push(`replay-capsule-target-class:${targetClass}`)
+  warnings.push(`replay-capsule-export-mode:${exportMode}`)
 
   if (unresolvedRequiredAssets > 0) {
     warnings.push(`replay-capsule-required-assets-unresolved:${unresolvedRequiredAssets}`)
@@ -308,6 +332,8 @@ export const extractPortableFromReplayCapsule = (
     },
     diagnostics: {
       source: 'replay-capsule',
+      targetClass,
+      exportMode,
       warnings,
       confidencePenalty,
       confidence,

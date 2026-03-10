@@ -9,6 +9,8 @@ import type {
 
 export interface FidelityPortableDiagnosticsInput {
   source?: 'replay-capsule' | 'portable-fallback'
+  targetClass?: 'semantic-ui' | 'render-scene'
+  exportMode?: 'semantic-ui-portable' | 'render-scene-freeze'
   warnings?: string[]
   confidencePenalty?: number
   confidence?: number
@@ -405,8 +407,12 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
           : overallScore,
     )
     const source = portable.source || 'portable-fallback'
+    const targetClass = portable.targetClass || 'semantic-ui'
+    const exportMode = portable.exportMode || (targetClass === 'render-scene' ? 'render-scene-freeze' : 'semantic-ui-portable')
     const portableWarnings = asArray(portable.warnings)
     warnings.push(`fidelity-portable-source:${source}`)
+    warnings.push(`fidelity-target-class:${targetClass}`)
+    warnings.push(`fidelity-export-mode:${exportMode}`)
     warnings.push(...portableWarnings.map((warning) => `fidelity-portable-diagnostics:${warning}`))
 
     overallScore = overallScore * 0.85 + portableConfidence * 0.15
@@ -415,6 +421,9 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
     if (source === 'portable-fallback') {
       overallScore = Math.min(overallScore, 0.82)
       overallConfidence = Math.min(overallConfidence, 0.8)
+    }
+    if (targetClass === 'render-scene') {
+      notes.unshift('render-scene-target-detected')
     }
 
     const hasEmptyShellFailure = portableWarnings.includes('replay-capsule-empty-shell-export')

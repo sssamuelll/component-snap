@@ -22,10 +22,12 @@ type StoredPayload = {
   title: string
   url: string
   selection: string
-  exportMode?: 'replay-first-capture-with-portable-fallback-export'
+  exportMode?: 'semantic-ui-portable' | 'render-scene-freeze'
   exportTier?: 'capsule' | 'fallback'
   exportDiagnostics?: {
     source?: 'replay-capsule' | 'portable-fallback'
+    targetClass?: 'semantic-ui' | 'render-scene'
+    exportMode?: 'semantic-ui-portable' | 'render-scene-freeze'
     warnings: string[]
     confidencePenalty?: number
     confidence?: number
@@ -312,6 +314,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ? capsuleExtraction.diagnostics
             : {
                 source: 'portable-fallback',
+                targetClass: 'semantic-ui',
+                exportMode: 'semantic-ui-portable',
                 warnings: [...capsuleExtraction.warnings, ...fallbackWarnings],
                 confidencePenalty: fallbackConfidencePenalty,
                 confidence: fallbackConfidence,
@@ -333,10 +337,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               : {}),
           },
           cdpCapture,
-          exportMode: 'replay-first-capture-with-portable-fallback-export',
+          exportMode: capsuleExtraction.ok ? capsuleExtraction.diagnostics.exportMode : 'semantic-ui-portable',
           exportTier: capsuleExtraction.ok ? 'capsule' : 'fallback',
           exportDiagnostics: {
             source: capsuleExtraction.ok ? capsuleExtraction.diagnostics.source : 'portable-fallback',
+            targetClass: capsuleExtraction.ok ? capsuleExtraction.diagnostics.targetClass : 'semantic-ui',
+            exportMode: capsuleExtraction.ok ? capsuleExtraction.diagnostics.exportMode : 'semantic-ui-portable',
             warnings: capsuleExtraction.ok ? capsuleExtraction.diagnostics.warnings : [...capsuleExtraction.warnings, ...fallbackWarnings],
             confidencePenalty: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidencePenalty : fallbackConfidencePenalty,
             confidence: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidence : fallbackConfidence,
