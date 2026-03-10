@@ -283,9 +283,12 @@ describe('scoreCaptureFidelity', () => {
       },
     })
 
+    expect(scoring.targetClass).toBe('render-scene')
+    expect(scoring.exportMode).toBe('render-scene-freeze')
     expect(scoring.warnings).toContain('fidelity-target-class:render-scene')
     expect(scoring.warnings).toContain('fidelity-export-mode:render-scene-freeze')
     expect(scoring.notes).toContain('render-scene-target-detected')
+    expect(scoring.notes).toContain('render-scene-export-mode:render-scene-freeze')
   })
 
   it('hard-gates overall fidelity when portable output collapses to an empty shell', () => {

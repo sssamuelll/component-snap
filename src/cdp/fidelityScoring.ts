@@ -424,6 +424,11 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
     }
     if (targetClass === 'render-scene') {
       notes.unshift('render-scene-target-detected')
+      notes.unshift(`render-scene-export-mode:${exportMode}`)
+      if (source === 'replay-capsule') {
+        overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.58))
+        overallConfidence = Math.max(Math.min(overallConfidence, 0.72), Math.min(portableConfidence, 0.58))
+      }
     }
 
     const hasEmptyShellFailure = portableWarnings.includes('replay-capsule-empty-shell-export')
@@ -445,9 +450,14 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
 
   if (!input.pixelDiff) notes.unshift('heuristic-score-no-pixel-diff')
 
+  const targetClass = input.portableDiagnostics?.targetClass
+  const exportMode = input.portableDiagnostics?.exportMode
+
   return {
     version: '0',
     computedAt: new Date().toISOString(),
+    targetClass,
+    exportMode,
     overall: {
       score: round3(overallScore),
       confidence: round3(overallConfidence),

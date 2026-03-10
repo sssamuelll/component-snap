@@ -12,6 +12,8 @@ export interface FidelityMetaSummaryV0 {
   structuralConfidence: number
   overall: number
   overallConfidence: number
+  targetClass?: FidelityScoringV0['targetClass']
+  exportMode?: FidelityScoringV0['exportMode']
   benchmark?: FidelityBenchmarkMetadataV0
   pixelDiff?: FidelityScoringV0['pixelDiff']
   warnings?: string[]
@@ -56,6 +58,8 @@ export const serializeFidelityForMeta = (
   structuralConfidence: scoring.dimensions.structuralConfidence.score,
   overall: scoring.overall.score,
   overallConfidence: scoring.overall.confidence,
+  targetClass: scoring.targetClass,
+  exportMode: scoring.exportMode,
   benchmark: options.benchmark,
   pixelDiff: scoring.pixelDiff,
   warnings: scoring.warnings.length ? [...scoring.warnings] : undefined,
@@ -76,6 +80,10 @@ export const formatFidelityReport = (
 
   if (meta.benchmark) {
     lines.push(`Benchmark: ${meta.benchmark.suite} @ ${meta.benchmark.version}`)
+  }
+
+  if (meta.targetClass || meta.exportMode) {
+    lines.push(`Target: ${meta.targetClass || 'unknown'} | Export mode: ${meta.exportMode || 'unknown'}`)
   }
 
   if (meta.pixelDiff) {
