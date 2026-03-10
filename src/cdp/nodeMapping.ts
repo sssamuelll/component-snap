@@ -95,7 +95,14 @@ const resolveNodeBySelectorFallback = async (
 
 const chooseFallbackSelector = (seed: CaptureSeed) => {
   const fromFingerprint = seed.targetFingerprint
-  return fromFingerprint?.stableSelector || fromFingerprint?.selectedSelector || seed.selectedSelector || seed.stableSelector
+  return (
+    fromFingerprint?.promotedStableSelector ||
+    fromFingerprint?.promotedSelectedSelector ||
+    fromFingerprint?.stableSelector ||
+    fromFingerprint?.selectedSelector ||
+    seed.selectedSelector ||
+    seed.stableSelector
+  )
 }
 
 export const mapTargetToCDPNode = async (

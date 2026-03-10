@@ -154,6 +154,8 @@ const buildSkeletonFromSelector = (selector: string) => {
 
 const pickSelector = (capture: CaptureBundleV0, replayCapsule: ReplayCapsuleV0, fallbackSelector?: string) => {
   return (
+    capture.seed.targetFingerprint?.promotedSelectedSelector ||
+    capture.seed.targetFingerprint?.promotedStableSelector ||
     capture.seed.targetFingerprint?.selectedSelector ||
     capture.seed.targetFingerprint?.stableSelector ||
     capture.seed.selectedSelector ||

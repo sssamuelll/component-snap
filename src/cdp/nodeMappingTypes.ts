@@ -19,6 +19,8 @@ export interface TargetShadowContext {
 export interface TargetFingerprint {
   stableSelector?: string
   selectedSelector?: string
+  promotedStableSelector?: string
+  promotedSelectedSelector?: string
   tagName: string
   id?: string
   classList: string[]

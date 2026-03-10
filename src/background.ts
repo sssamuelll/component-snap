@@ -130,8 +130,14 @@ const buildCaptureSeed = (
   tabId,
   pageUrl: payload.url,
   pageTitle: payload.title,
-  stableSelector: payload.element?.targetFingerprint?.stableSelector || payload.element?.selector,
-  selectedSelector: payload.element?.targetFingerprint?.selectedSelector || payload.element?.selector,
+  stableSelector:
+    payload.element?.targetFingerprint?.promotedStableSelector ||
+    payload.element?.targetFingerprint?.stableSelector ||
+    payload.element?.selector,
+  selectedSelector:
+    payload.element?.targetFingerprint?.promotedSelectedSelector ||
+    payload.element?.targetFingerprint?.selectedSelector ||
+    payload.element?.selector,
   boundingBox: clipRect,
   elementHint: {
     tagName: payload.element?.tag,

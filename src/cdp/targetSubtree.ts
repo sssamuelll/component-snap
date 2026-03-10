@@ -153,6 +153,8 @@ const resolveObjectId = async (client: CDPClient, nodeMapping: NodeMappingResult
   }
 
   const selector =
+    seed.targetFingerprint?.promotedSelectedSelector ||
+    seed.targetFingerprint?.promotedStableSelector ||
     seed.targetFingerprint?.selectedSelector ||
     seed.targetFingerprint?.stableSelector ||
     seed.selectedSelector ||

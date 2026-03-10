@@ -180,11 +180,14 @@ const getShadowContext = (el: HTMLElement) => {
   }
 }
 
-const buildTargetFingerprint = (target: HTMLElement) => {
+const buildTargetFingerprint = (target: HTMLElement, captureRoot?: HTMLElement) => {
   const rect = target.getBoundingClientRect()
+  const promotedRoot = captureRoot && captureRoot !== target ? captureRoot : undefined
   return {
     stableSelector: buildStableSelector(target),
     selectedSelector: buildStableSelector(target),
+    promotedStableSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
+    promotedSelectedSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
     tagName: target.tagName.toLowerCase(),
     id: target.id || undefined,
     classList: Array.from(target.classList),
@@ -432,8 +435,8 @@ const onBlockerClick = async (event: MouseEvent) => {
   recordActionFromElement('click', target, {
     text: toActionTextPreview(target.textContent || ''),
   })
-  const targetFingerprint = buildTargetFingerprint(target)
   const captureRoot = findVisualRoot(target)
+  const targetFingerprint = buildTargetFingerprint(target, captureRoot)
   const rect = captureRoot.getBoundingClientRect(), selector = buildStableSelector(captureRoot)
   const portable = await extractPortableFallbackSubtree(captureRoot, target)
   const snap: ElementSnap = {
