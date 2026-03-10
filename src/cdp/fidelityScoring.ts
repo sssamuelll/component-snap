@@ -255,6 +255,8 @@ const buildStructuralScore = (capture: CaptureBundleV0 | undefined): FidelityDim
   const nodeMapping = replay?.snapshot.nodeMapping || capture?.nodeMapping
   const domSnapshot = replay?.snapshot.domSnapshot || capture?.domSnapshot
   const shadowTopology = replay?.snapshot.shadowTopology || capture?.shadowTopology
+  const targetSubtree = replay?.snapshot.targetSubtree || capture?.targetSubtree
+  const candidateSubtree = replay?.snapshot.candidateSubtree || capture?.candidateSubtree
   const fingerprint = capture?.seed.targetFingerprint
 
   const warnings: string[] = []
@@ -287,6 +289,56 @@ const buildStructuralScore = (capture: CaptureBundleV0 | undefined): FidelityDim
     evidence.push('structure-target-fingerprint-present')
   } else {
     warnings.push('structure-target-fingerprint-missing')
+  }
+
+  if (targetSubtree?.html?.trim()) {
+    score += 0.08
+    confidence += 0.06
+    evidence.push(`structure-target-subtree-nodes:${targetSubtree.nodeCount}`)
+  } else {
+    warnings.push('structure-target-subtree-missing')
+  }
+
+  if (candidateSubtree?.html?.trim()) {
+    score += 0.12
+    confidence += 0.1
+    evidence.push(`structure-candidate-subtree-nodes:${candidateSubtree.nodeCount}`)
+
+    const rawLength = targetSubtree?.html?.length || 0
+    const candidateLength = candidateSubtree.html.length
+    if (rawLength > 0 && candidateLength < rawLength) {
+      evidence.push(`structure-candidate-subtree-reduction:${rawLength - candidateLength}`)
+    }
+    if (candidateSubtree.compactedSvgCount > 0) {
+      evidence.push(`structure-candidate-subtree-compacted-svgs:${candidateSubtree.compactedSvgCount}`)
+    }
+    if (candidateSubtree.quality) {
+      evidence.push(`structure-candidate-subtree-profile:${candidateSubtree.quality.profile}`)
+      evidence.push(`structure-candidate-subtree-anchor-density:${candidateSubtree.quality.anchorDensity}`)
+      if (typeof candidateSubtree.quality.wrapperToAnchorRatio === 'number') {
+        evidence.push(`structure-candidate-subtree-wrapper-anchor-ratio:${candidateSubtree.quality.wrapperToAnchorRatio}`)
+      }
+    }
+    if (candidateSubtree.reconstruction) {
+      evidence.push(`structure-candidate-subtree-reconstruction:${candidateSubtree.reconstruction.mode}`)
+      if (candidateSubtree.reconstruction.preservedEmptyScenePrimitiveCount > 0) {
+        evidence.push(
+          `structure-candidate-subtree-scene-primitives:${candidateSubtree.reconstruction.preservedEmptyScenePrimitiveCount}`,
+        )
+      }
+      if (candidateSubtree.reconstruction.preservedCustomElementCount > 0) {
+        evidence.push(
+          `structure-candidate-subtree-scene-custom-elements:${candidateSubtree.reconstruction.preservedCustomElementCount}`,
+        )
+      }
+      if (candidateSubtree.reconstruction.preservedLayeredElementCount > 0) {
+        evidence.push(
+          `structure-candidate-subtree-scene-layered-elements:${candidateSubtree.reconstruction.preservedLayeredElementCount}`,
+        )
+      }
+    }
+  } else {
+    warnings.push('structure-candidate-subtree-missing')
   }
 
   if (shadowTopology) {

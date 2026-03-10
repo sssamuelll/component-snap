@@ -46,8 +46,15 @@ describe('buildReplayCapsule', () => {
         removedTagCounts: {},
         removedAttributeCounts: {},
         collapsedWrapperCount: 0,
+        compactedSvgCount: 0,
         nodeCount: 1,
         textLength: 7,
+        reconstruction: {
+          mode: 'semantic',
+          preservedEmptyScenePrimitiveCount: 0,
+          preservedCustomElementCount: 0,
+          preservedLayeredElementCount: 0,
+        },
       },
       resourceGraph: { nodes: [{ id: 'res_0', kind: 'document' }], edges: [] },
     })

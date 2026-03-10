@@ -245,6 +245,9 @@ export const extractPortableFromReplayCapsule = (
     ...asArray(replayCapsule.diagnostics?.warnings).map((warning) => `replay-capsule-diagnostics:${warning}`),
   ]
   if (candidateSubtree?.html?.trim()) warnings.push('replay-capsule-candidate-subtree-used')
+  if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') {
+    warnings.push('replay-capsule-scene-preserving-subtree-used')
+  }
   warnings.push(...asArray(candidateSubtree?.warnings).map((warning) => `replay-capsule-candidate-subtree:${warning}`))
 
   if (unresolvedRequiredAssets > 0) {

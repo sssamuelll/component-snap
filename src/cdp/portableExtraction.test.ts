@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { LICHESS_LIKE_SCENE_HTML } from './__fixtures__/lichessLikeScene'
 import type { CaptureBundleV0, ReplayCapsuleV0 } from './types'
 import { extractPortableFromReplayCapsule } from './portableExtraction'
 
@@ -50,14 +51,36 @@ const baseReplayCapsule = (): ReplayCapsuleV0 => ({
       maxDepth: 2,
     },
     candidateSubtree: {
-      source: 'normalized-subtree',
-      html: '<button class="cta"><span>Buy now</span></button>',
+      source: 'reconstructed-subtree',
+      html: '<button class="cta"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="12%" y="12%" width="76%" height="76%" rx="18%"></rect></svg><span>Buy now</span></button>',
       removedTagCounts: { 'rpl-tooltip': 1 },
       removedAttributeCounts: { 'data-csnap': 1 },
       collapsedWrapperCount: 1,
-      nodeCount: 2,
+      compactedSvgCount: 1,
+      nodeCount: 4,
       textLength: 7,
-      warnings: ['target-candidate-collapsed-wrappers:1', 'target-candidate-noise-attributes-removed'],
+      quality: {
+        anchorNodeCount: 2,
+        wrapperNodeCount: 1,
+        textNodeCount: 1,
+        anchorDensity: 0.5,
+        wrapperDensity: 0.25,
+        wrapperToAnchorRatio: 0.5,
+        profile: 'anchor-dense',
+      },
+      reconstruction: {
+        mode: 'semantic',
+        preservedEmptyScenePrimitiveCount: 0,
+        preservedCustomElementCount: 0,
+        preservedLayeredElementCount: 0,
+      },
+      warnings: [
+        'target-candidate-collapsed-wrappers:1',
+        'target-candidate-compacted-svgs:1',
+        'target-candidate-noise-attributes-removed',
+        'target-candidate-reconstruction:semantic',
+        'target-candidate-profile:anchor-dense',
+      ],
     },
     resourceGraph: {
       nodes: [{ id: 'doc', kind: 'document' }],
@@ -108,12 +131,15 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.artifacts.css).toContain('.cta, button.cta')
     expect(result.artifacts.css).toContain('--brand: #f00')
     expect(result.artifacts.css).toContain('@keyframes pulse')
-    expect(result.artifacts.html).toContain('<button class="cta"><span>Buy now</span></button>')
+    expect(result.artifacts.html).toContain('<button class="cta"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect')
     expect(result.artifacts.html).not.toContain('<rpl-tooltip')
+    expect(result.artifacts.html).not.toContain('<path')
     expect(result.artifacts.html).toContain('component-snap-shadow-topology')
     expect(result.diagnostics.source).toBe('replay-capsule')
     expect(result.diagnostics.warnings).toContain('replay-capsule-portable-extractor-used')
     expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree-used')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-compacted-svgs:1')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-profile:anchor-dense')
     expect(result.diagnostics.confidence).toBeGreaterThan(0.4)
   })
 
@@ -161,5 +187,58 @@ describe('extractPortableFromReplayCapsule', () => {
     if (!result.ok) return
     expect(result.diagnostics.warnings).toContain('replay-capsule-required-assets-unresolved:1')
     expect(result.diagnostics.confidence).toBeLessThan(0.8)
+  })
+
+  it('surfaces scene-preserving candidate exports for board-like captures', () => {
+    const capture = baseCapture()
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = {
+        source: 'runtime-object',
+        html: LICHESS_LIKE_SCENE_HTML,
+        nodeCount: 18,
+        elementCount: 18,
+        textNodeCount: 3,
+        textLength: 3,
+        maxDepth: 6,
+      }
+      capture.replayCapsule.snapshot.candidateSubtree = {
+        source: 'reconstructed-subtree',
+        html: LICHESS_LIKE_SCENE_HTML,
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 0,
+        compactedSvgCount: 0,
+        nodeCount: 18,
+        textLength: 3,
+        quality: {
+          anchorNodeCount: 1,
+          wrapperNodeCount: 4,
+          textNodeCount: 3,
+          anchorDensity: 0.056,
+          wrapperDensity: 0.222,
+          profile: 'scene-like',
+        },
+        reconstruction: {
+          mode: 'scene-preserving',
+          preservedEmptyScenePrimitiveCount: 6,
+          preservedCustomElementCount: 2,
+          preservedLayeredElementCount: 6,
+        },
+        warnings: [
+          'target-candidate-scene-like-subtree',
+          'target-candidate-reconstruction:scene-preserving',
+          'target-candidate-profile:scene-like',
+        ],
+      }
+    }
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.artifacts.html).toContain('<cg-board class="cg-board"')
+    expect(result.artifacts.html).toContain('<piece class="white king"')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-scene-preserving-subtree-used')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-reconstruction:scene-preserving')
   })
 })

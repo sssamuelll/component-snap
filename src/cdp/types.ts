@@ -174,12 +174,28 @@ export interface TargetSubtreeV0 {
 
 export interface TargetCandidateSubtreeV0 {
   html: string
-  source: 'normalized-subtree'
+  source: 'normalized-subtree' | 'reconstructed-subtree'
   removedTagCounts: Record<string, number>
   removedAttributeCounts: Record<string, number>
   collapsedWrapperCount: number
+  compactedSvgCount: number
   nodeCount: number
   textLength: number
+  reconstruction?: {
+    mode: 'semantic' | 'scene-preserving'
+    preservedEmptyScenePrimitiveCount: number
+    preservedCustomElementCount: number
+    preservedLayeredElementCount: number
+  }
+  quality?: {
+    anchorNodeCount: number
+    wrapperNodeCount: number
+    textNodeCount: number
+    anchorDensity: number
+    wrapperDensity: number
+    wrapperToAnchorRatio?: number
+    profile: 'anchor-dense' | 'balanced' | 'wrapper-heavy' | 'scene-like'
+  }
   warnings?: string[]
 }
 

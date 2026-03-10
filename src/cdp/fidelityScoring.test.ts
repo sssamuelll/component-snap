@@ -45,6 +45,41 @@ const buildCapture = (): CaptureBundleV0 => ({
   },
   domSnapshot: { raw: { documents: [] }, stats: { documents: 1, nodes: 150 } },
   runtimeHints: {},
+  targetSubtree: {
+    source: 'runtime-object',
+    html: '<button class="cta"><svg class="icon" viewBox="0 0 24 24"><path d="M1 1L23 23"></path></svg><span>Buy now</span></button>',
+    nodeCount: 4,
+    elementCount: 4,
+    textNodeCount: 1,
+    textLength: 7,
+    maxDepth: 2,
+  },
+  candidateSubtree: {
+    source: 'reconstructed-subtree',
+    html: '<button class="cta"><svg class="icon" viewBox="0 0 24 24"><rect x="12%" y="12%" width="76%" height="76%" rx="18%"></rect></svg><span>Buy now</span></button>',
+    removedTagCounts: {},
+    removedAttributeCounts: {},
+    collapsedWrapperCount: 0,
+    compactedSvgCount: 1,
+    nodeCount: 4,
+    textLength: 7,
+    quality: {
+      anchorNodeCount: 2,
+      wrapperNodeCount: 1,
+      textNodeCount: 1,
+      anchorDensity: 0.5,
+      wrapperDensity: 0.25,
+      wrapperToAnchorRatio: 0.5,
+      profile: 'anchor-dense',
+    },
+    reconstruction: {
+      mode: 'semantic',
+      preservedEmptyScenePrimitiveCount: 0,
+      preservedCustomElementCount: 0,
+      preservedLayeredElementCount: 0,
+    },
+    warnings: ['target-candidate-compacted-svgs:1', 'target-candidate-profile:anchor-dense'],
+  },
   nodeMapping: {
     resolved: true,
     confidence: 0.93,
@@ -92,6 +127,41 @@ const buildCapture = (): CaptureBundleV0 => ({
         clipRect: { x: 1, y: 2, width: 120, height: 44, dpr: 2 },
       },
       domSnapshot: { raw: { documents: [] }, stats: { documents: 1, nodes: 150 } },
+      targetSubtree: {
+        source: 'runtime-object',
+        html: '<button class="cta"><svg class="icon" viewBox="0 0 24 24"><path d="M1 1L23 23"></path></svg><span>Buy now</span></button>',
+        nodeCount: 4,
+        elementCount: 4,
+        textNodeCount: 1,
+        textLength: 7,
+        maxDepth: 2,
+      },
+      candidateSubtree: {
+        source: 'reconstructed-subtree',
+        html: '<button class="cta"><svg class="icon" viewBox="0 0 24 24"><rect x="12%" y="12%" width="76%" height="76%" rx="18%"></rect></svg><span>Buy now</span></button>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 0,
+        compactedSvgCount: 1,
+        nodeCount: 4,
+        textLength: 7,
+        quality: {
+          anchorNodeCount: 2,
+          wrapperNodeCount: 1,
+          textNodeCount: 1,
+          anchorDensity: 0.5,
+          wrapperDensity: 0.25,
+          wrapperToAnchorRatio: 0.5,
+          profile: 'anchor-dense',
+        },
+        reconstruction: {
+          mode: 'semantic',
+          preservedEmptyScenePrimitiveCount: 0,
+          preservedCustomElementCount: 0,
+          preservedLayeredElementCount: 0,
+        },
+        warnings: ['target-candidate-compacted-svgs:1', 'target-candidate-profile:anchor-dense'],
+      },
       nodeMapping: {
         resolved: true,
         confidence: 0.93,
@@ -155,6 +225,10 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.overall.confidence).toBeGreaterThan(0.65)
     expect(scoring.dimensions.visual.score).toBeGreaterThan(0.75)
     expect(scoring.dimensions.interaction.score).toBeGreaterThan(0.8)
+    expect(scoring.dimensions.structuralConfidence.evidence).toContain('structure-candidate-subtree-compacted-svgs:1')
+    expect(scoring.dimensions.structuralConfidence.evidence).toContain('structure-candidate-subtree-profile:anchor-dense')
+    expect(scoring.dimensions.structuralConfidence.evidence).toContain('structure-candidate-subtree-anchor-density:0.5')
+    expect(scoring.dimensions.structuralConfidence.evidence).toContain('structure-candidate-subtree-reconstruction:semantic')
     expect(scoring.warnings).not.toContain('visual-screenshot-missing')
   })
 
@@ -163,12 +237,19 @@ describe('scoreCaptureFidelity', () => {
     if (capture.replayCapsule) capture.replayCapsule.timeline.events = []
     capture.nodeMapping = undefined
     if (capture.replayCapsule) capture.replayCapsule.snapshot.nodeMapping = undefined
+    capture.targetSubtree = undefined
+    capture.candidateSubtree = undefined
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = undefined
+      capture.replayCapsule.snapshot.candidateSubtree = undefined
+    }
     capture.seed.targetFingerprint = undefined
 
     const scoring = scoreCaptureFidelity({ capture })
     expect(scoring.dimensions.interaction.score).toBeLessThan(0.3)
     expect(scoring.dimensions.structuralConfidence.score).toBeLessThan(0.65)
     expect(scoring.warnings).toContain('interaction-timeline-empty')
+    expect(scoring.warnings).toContain('structure-candidate-subtree-missing')
     expect(scoring.warnings).toContain('structure-target-fingerprint-missing')
   })
 
