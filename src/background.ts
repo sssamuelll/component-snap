@@ -34,6 +34,28 @@ type StoredPayload = {
     fidelity?: FidelityScoringV0
     cdpError?: string
   }
+  build?: {
+    commitSha?: string
+    timestamp?: string
+    pipelineVersion?: string
+  }
+  provenance?: {
+    pickedSelector?: string
+    promotedSelector?: string
+    renderRootSelector?: string
+    exportedRootSelector?: string
+    bootstrapRootSelector?: string
+  }
+  frame?: {
+    status?: 'frame-complete' | 'frame-incomplete'
+    failureReason?:
+      | 'leaf-without-frame'
+      | 'missing-position-context'
+      | 'missing-size-context'
+      | 'missing-wrapper-chain'
+      | 'bootstrap-root-mismatch'
+      | 'unknown'
+  }
   snappedAt?: string
   snapFolder?: string
   requestId?: string
@@ -50,6 +72,7 @@ type StoredPayload = {
     js?: string
     kind?: string
     screenshotDataUrl?: string
+    selectedSelector?: string
     portableFallback?: PortableFallbackExtractionDiagnostics
     targetFingerprint?: TargetFingerprint
   }
@@ -73,6 +96,59 @@ const log = (event: string, level: 'info' | 'error' = 'info', requestId?: string
 }
 
 const sanitize = (input: string) => input.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
+
+const PIPELINE_VERSION = 'observability-v1'
+const BUILD_COMMIT_SHA = '85b8cae'
+const BUILD_TIMESTAMP = '2026-03-11T17:02:38+01:00'
+
+const deriveProvenance = (payload: StoredPayload) => {
+  const promotedSelector =
+    payload.element?.targetFingerprint?.promotedStableSelector ||
+    payload.element?.targetFingerprint?.promotedSelectedSelector ||
+    payload.element?.selector
+  const pickedSelector =
+    payload.element?.targetFingerprint?.stableSelector ||
+    payload.element?.targetFingerprint?.selectedSelector ||
+    payload.element?.selectedSelector ||
+    payload.element?.selector
+  const exportedRootSelector = payload.exportTier === 'fallback' ? '[data-csnap-root="true"]' : promotedSelector
+  const bootstrapRootSelector = payload.exportTier === 'fallback' ? '[data-csnap-root="true"]' : promotedSelector
+  const renderRootSelector = promotedSelector
+
+  return {
+    pickedSelector,
+    promotedSelector,
+    renderRootSelector,
+    exportedRootSelector,
+    bootstrapRootSelector,
+  }
+}
+
+const deriveFrameState = (payload: StoredPayload, provenance: ReturnType<typeof deriveProvenance>) => {
+  const targetClass = payload.exportDiagnostics?.targetClass
+  if (targetClass !== 'render-scene') {
+    return {
+      status: 'frame-complete' as const,
+      failureReason: undefined,
+    }
+  }
+
+  const html = payload.element?.html || ''
+  const hasSceneLeafOnly = /<cg-board\b/i.test(html) && !/(puzzle__board|cg-wrap|cg-container|data-csnap-root=)/i.test(html)
+  const bootstrapMismatch = provenance.bootstrapRootSelector !== provenance.exportedRootSelector
+
+  if (bootstrapMismatch) {
+    return { status: 'frame-incomplete' as const, failureReason: 'bootstrap-root-mismatch' as const }
+  }
+  if (hasSceneLeafOnly) {
+    return { status: 'frame-incomplete' as const, failureReason: 'leaf-without-frame' as const }
+  }
+
+  return {
+    status: 'frame-complete' as const,
+    failureReason: undefined,
+  }
+}
 
 const toDataUrlFromText = (text: string, mimeType: string) => {
   const encoder = new TextEncoder()
@@ -164,16 +240,28 @@ const saveSnapFiles = async (payload: StoredPayload) => {
   const fidelityExport = payload.exportDiagnostics?.fidelity
     ? buildFidelityExport(payload.exportDiagnostics.fidelity)
     : undefined
+  const provenance = deriveProvenance(payload)
+  const frame = deriveFrameState(payload, provenance)
   const metaPayload: StoredPayload = {
     ...payload,
     exportMode: payload.exportMode,
     exportTier: payload.exportTier || 'fallback',
+    build: {
+      commitSha: BUILD_COMMIT_SHA,
+      timestamp: BUILD_TIMESTAMP,
+      pipelineVersion: PIPELINE_VERSION,
+    },
+    provenance,
+    frame,
     exportDiagnostics: {
       source: payload.exportDiagnostics?.source,
+      targetClass: payload.exportDiagnostics?.targetClass,
+      exportMode: payload.exportDiagnostics?.exportMode,
       warnings: payload.exportDiagnostics?.warnings || [],
       confidencePenalty: payload.exportDiagnostics?.confidencePenalty,
       confidence: payload.exportDiagnostics?.confidence,
       fidelity: payload.exportDiagnostics?.fidelity,
+      cdpError: payload.exportDiagnostics?.cdpError,
     },
   }
   const meta = JSON.stringify(
