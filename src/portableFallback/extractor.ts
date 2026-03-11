@@ -430,6 +430,7 @@ export const extractPortableFallbackSubtree = async (
   walkClone(clone)
 
   const rootBox = root.getBoundingClientRect()
+  clone.setAttribute('data-csnap-exported-root', 'true')
   clone.style.width = `${rootBox.width}px`
   clone.style.height = `${rootBox.height}px`
   clone.style.position = 'relative'

@@ -86,6 +86,7 @@ const TRACEABLE_MUTATION_ATTRS = new Set([
 
 const SCENE_TAG_NAMES = new Set(['piece', 'square', 'coord', 'coords', 'cg-board', 'cg-container', 'cg-wrap'])
 const SCENE_CLASS_TOKENS = ['board', 'puzzle__board', 'main-board', 'cg-wrap', 'overlay', 'coords']
+const SCENE_FRAME_CLASS_TOKENS = ['puzzle__board', 'main-board', 'cg-wrap', 'board', 'viewport', 'stage']
 
 const findVisualRoot = (target: HTMLElement) => {
   let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
@@ -93,6 +94,15 @@ const findVisualRoot = (target: HTMLElement) => {
     const tag = el.tagName.toLowerCase()
     const cls = (el.className?.toString() || '').toLowerCase()
     return SCENE_TAG_NAMES.has(tag) || SCENE_CLASS_TOKENS.some((token) => cls.includes(token))
+  }
+  const isSceneFrameCandidate = (el: HTMLElement) => {
+    const tag = el.tagName.toLowerCase()
+    const cls = (el.className?.toString() || '').toLowerCase()
+    if (cls.includes('puzzle__board') || cls.includes('main-board')) return true
+    if (tag === 'cg-wrap' || tag === 'cg-container') return true
+    if (SCENE_FRAME_CLASS_TOKENS.some((token) => cls.includes(token))) return true
+    const style = window.getComputedStyle(el)
+    return (style.position === 'relative' || style.position === 'absolute') && hasSceneMarkers(el)
   }
   const isSceneTarget = (() => {
     let curr: HTMLElement | null = target
@@ -121,10 +131,13 @@ const findVisualRoot = (target: HTMLElement) => {
     return score
   }
   let curr = target
+  let bestSceneFrame: HTMLElement | null = null
   for (let depth = 0; depth < 15 && curr && curr !== document.body; depth++) {
     if (getScore(curr) > 30) best = curr
+    if (isSceneTarget && isSceneFrameCandidate(curr)) bestSceneFrame = curr
     curr = curr.parentElement as HTMLElement
   }
+  if (isSceneTarget && bestSceneFrame) return bestSceneFrame
   return best
 }
 
