@@ -116,6 +116,16 @@ const ensurePathExists = async (targetPath: string) => {
 
 const getRunLabel = () => new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_')
 
+const getBenchmarkContentScriptLoader = async () => {
+  const manifestPath = path.resolve(process.cwd(), 'dist/manifest.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+    content_scripts?: Array<{ js?: string[] }>
+  }
+  const loader = manifest.content_scripts?.flatMap((entry) => entry.js || []).find((file) => file.includes('content.ts-loader-'))
+  if (!loader) throw new Error('Could not resolve content script loader from dist/manifest.json')
+  return loader
+}
+
 const resolveScenarios = (scenarioIds: string[]) => {
   if (scenarioIds.includes('all')) return benchmarkScenarios
 
@@ -144,9 +154,9 @@ const clearLastSelection = async (context: BrowserContext) => {
   })
 }
 
-const requestCapture = async (context: BrowserContext, requestId: string, pageUrl: string) => {
+const requestCapture = async (context: BrowserContext, requestId: string, pageUrl: string, contentScriptLoader: string) => {
   const serviceWorker = await getServiceWorker(context)
-  return await serviceWorker.evaluate(async ({ captureRequestId, benchmarkPageUrl }) => {
+  return await serviceWorker.evaluate(async ({ captureRequestId, benchmarkPageUrl, contentScriptLoaderPath }) => {
     const chromeApi = (globalThis as unknown as { chrome: any }).chrome
     const tabs = await chromeApi.tabs.query({})
     const normalizedUrl = (() => {
@@ -188,7 +198,7 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
       try {
         const execResult = await chromeApi.scripting.executeScript({
           target: { tabId: tab.id },
-          files: ['assets/content.ts-loader-CyaBAUqQ.js'],
+          files: [contentScriptLoaderPath],
         })
         return { ok: true as const, execResult }
       } catch (error) {
@@ -201,12 +211,21 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
         const execResult = await chromeApi.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => {
-            ;(window as any).__componentSnapProbe = {
-              href: window.location.href,
-              readyState: document.readyState,
-              hasBody: !!document.body,
+            const browserGlobal = globalThis as typeof globalThis & {
+              location?: { href?: string }
+              document?: { readyState?: string; body?: unknown }
+              __componentSnapProbe?: {
+                href: string
+                readyState: string
+                hasBody: boolean
+              }
             }
-            return (window as any).__componentSnapProbe
+            browserGlobal.__componentSnapProbe = {
+              href: browserGlobal.location?.href || '',
+              readyState: browserGlobal.document?.readyState || 'unknown',
+              hasBody: !!browserGlobal.document?.body,
+            }
+            return browserGlobal.__componentSnapProbe
           },
         })
         return { ok: true as const, execResult }
@@ -252,7 +271,7 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
     }
 
     return { ok: false, error: lastError }
-  }, { captureRequestId: requestId, benchmarkPageUrl: pageUrl })
+  }, { captureRequestId: requestId, benchmarkPageUrl: pageUrl, contentScriptLoaderPath: contentScriptLoader })
 }
 
 const pollLastSelection = async (context: BrowserContext, requestId: string, timeoutMs: number) => {
@@ -423,6 +442,7 @@ const runScenario = async (
   scenario: BenchmarkScenarioDefinition,
   options: BenchmarkCliOptions,
   scenarioOutputDir: string,
+  contentScriptLoader: string,
 ): Promise<BenchmarkScenarioResult> => {
   const startedAt = new Date().toISOString()
   const warnings = [...(scenario.notes || [])]
@@ -457,7 +477,7 @@ const runScenario = async (
     const sourceBuffer = await screenshotLocatorSafely(page, target.locator, sourcePath)
     if (!sourceBuffer) throw new Error(`Could not capture source screenshot for ${target.selector}.`)
 
-    const captureStart = await requestCapture(context, requestId, page.url())
+    const captureStart = await requestCapture(context, requestId, page.url(), contentScriptLoader)
     if (!captureStart?.ok || !captureStart.requestId) {
       throw new Error(`Could not start inspection: ${captureStart?.error || 'unknown error'}`)
     }
@@ -621,6 +641,7 @@ const main = async () => {
   const options = parseArgs(process.argv.slice(2))
   const scenarios = resolveScenarios(options.scenarioIds)
   const extensionPath = await ensurePathExists(path.resolve(process.cwd(), 'dist'))
+  const contentScriptLoader = await getBenchmarkContentScriptLoader()
   const runOutputDir = path.join(options.outputDir, getRunLabel())
   await mkdir(runOutputDir, { recursive: true })
   await mkdir(options.baselineDir, { recursive: true })
@@ -643,7 +664,7 @@ const main = async () => {
     for (const scenario of scenarios) {
       const scenarioOutputDir = path.join(runOutputDir, sanitizeArtifactSegment(scenario.id))
       await mkdir(scenarioOutputDir, { recursive: true })
-      const result = await runScenario(context, scenario, options, scenarioOutputDir)
+      const result = await runScenario(context, scenario, options, scenarioOutputDir, contentScriptLoader)
       results.push(result)
       await writeJson(path.join(scenarioOutputDir, 'result.json'), result)
       // Keep one scenario per page state for repeatability.
