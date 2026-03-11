@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPortableFallbackExtractionDiagnostics, type PortableFallbackExtractionStats } from './extractor'
+import { buildPortableFallbackComponentJs, buildPortableFallbackExtractionDiagnostics, type PortableFallbackExtractionStats } from './extractor'
 
 const baseStats = (): PortableFallbackExtractionStats => ({
   nodeCount: 12,
@@ -11,6 +11,13 @@ const baseStats = (): PortableFallbackExtractionStats => ({
   keyframeRuleCount: 1,
   inlinedAssetRequestCount: 0,
   inlinedAssetFailureCount: 0,
+})
+
+describe('buildPortableFallbackComponentJs', () => {
+  it('targets the exported root selector passed by the caller', () => {
+    const js = buildPortableFallbackComponentJs('[data-csnap-root="true"]')
+    expect(js).toContain('const rootSelector = "[data-csnap-root=\\"true\\"]";')
+  })
 })
 
 describe('buildPortableFallbackExtractionDiagnostics', () => {

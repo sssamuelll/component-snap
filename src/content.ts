@@ -446,7 +446,7 @@ const onBlockerClick = async (event: MouseEvent) => {
       tag: captureRoot.tagName.toLowerCase(), id: captureRoot.id || '', classes: Array.from(captureRoot.classList),
       text: (target.textContent || '').trim().slice(0, 300), selector, selectedSelector: portable.selectedSelector,
       html: portable.html, css: portable.css, freezeHtml: portable.html,
-      js: buildPortableFallbackComponentJs(portable.selectedSelector || selector), kind: classifyComponent(target),
+      js: buildPortableFallbackComponentJs(portable.rootSelector || portable.selectedSelector || selector), kind: classifyComponent(target),
       portableFallback: portable.diagnostics,
       targetFingerprint,
     },

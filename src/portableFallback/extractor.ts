@@ -23,6 +23,7 @@ export interface PortableFallbackExtractionResult {
   html: string
   css: string
   selectedSelector: string
+  rootSelector: string
   diagnostics: PortableFallbackExtractionDiagnostics
 }
 
@@ -567,14 +568,18 @@ export const extractPortableFallbackSubtree = async (
     (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   const fontFaces = getUsedFontFaces()
   const reset = `*,*::before,*::after{box-sizing:border-box;} :root{color-scheme: ${scheme};}`
-  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${scheme === 'dark' ? '#1a1a1b' : '#fff'};}#component-snap-root{display:contents;}`
-  const selectedSelector = `[data-csnap="${originalNodes.findIndex((node) => node === picked)}"]`
+  const centering = `html,body{margin:0;padding:0;height:100vh;display:flex;align-items:center;justify-content:center;background-color:${scheme === 'dark' ? '#1a1a1b' : '#fff'};}#component-snap-root{display:flex;align-items:center;justify-content:center;min-width:1px;min-height:1px;}[data-csnap-root="true"]{display:inline-block;position:relative;box-sizing:border-box;min-width:1px;min-height:1px;}`
+  const pickedIndex = originalNodes.findIndex((node) => node === picked)
+  const selectedSelector = pickedIndex >= 0 ? `[data-csnap="${pickedIndex}"]` : '[data-csnap-picked="true"]'
+  const rootSelector = '[data-csnap-root="true"]'
   const diagnostics = buildPortableFallbackExtractionDiagnostics(stats)
+  const html = `<div data-csnap-root="true" style="width:${rootBox.width}px;height:${rootBox.height}px;position:relative;">${clone.outerHTML}</div>`
 
   return {
-    html: clone.outerHTML,
+    html,
     css: `${fontFaces}\n\n${reset}\n${centering}\n\n${css}`,
     selectedSelector,
+    rootSelector,
     diagnostics,
   }
 }
