@@ -7,6 +7,7 @@ import {
 } from './portableFallback/extractor'
 
 type ContentMessage =
+  | { type: 'PING' }
   | { type: 'GET_SELECTION' }
   | { type: 'START_INSPECT'; requestId: string }
   | { type: 'STOP_INSPECT' }
@@ -516,6 +517,7 @@ const startInspect = (requestId: string) => {
 }
 
 chrome.runtime.onMessage.addListener((message: ContentMessage, _sender, sendResponse) => {
+  if (message?.type === 'PING') { sendResponse({ ok: true, href: window.location.href, ready: true }); return }
   if (message?.type === 'GET_SELECTION') { sendResponse({ ok: true, url: window.location.href, title: document.title, selection: window.getSelection()?.toString().trim() ?? '' }); return }
   if (message?.type === 'START_INSPECT') { startInspect(message.requestId); sendResponse({ ok: true }); return }
   if (message?.type === 'CAPTURE_DONE' && message.requestId === currentRequestId) { stopInspect(); sendResponse({ ok: true }); return }

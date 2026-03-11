@@ -278,7 +278,7 @@ describe('scoreCaptureFidelity', () => {
         source: 'replay-capsule',
         targetClass: 'render-scene',
         exportMode: 'render-scene-freeze',
-        warnings: ['replay-capsule-target-class:render-scene'],
+        warnings: ['replay-capsule-target-class:render-scene', 'replay-capsule-scene-html-validated'],
         confidence: 0.72,
       },
     })
@@ -289,6 +289,30 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.warnings).toContain('fidelity-export-mode:render-scene-freeze')
     expect(scoring.notes).toContain('render-scene-target-detected')
     expect(scoring.notes).toContain('render-scene-export-mode:render-scene-freeze')
+  })
+
+  it('does not apply generic fragile gating to validated render-scene exports', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'render-scene',
+        exportMode: 'render-scene-freeze',
+        warnings: [
+          'replay-capsule-target-class:render-scene',
+          'replay-capsule-scene-html-validated',
+          'replay-capsule-shadow-metadata-without-content',
+        ],
+        confidence: 0.61,
+        outputQuality: 'fragile',
+      },
+    })
+
+    expect(scoring.warnings).not.toContain('portable-output-empty-shell-gated')
+    expect(scoring.warnings).not.toContain('portable-output-fragile-gated')
+    expect(scoring.warnings).not.toContain('portable-output-scene-fragile-gated')
+    expect(scoring.overall.score).toBeGreaterThan(0.5)
+    expect(scoring.overall.confidence).toBeGreaterThan(0.4)
   })
 
   it('hard-gates overall fidelity when portable output collapses to an empty shell', () => {

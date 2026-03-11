@@ -32,6 +32,7 @@ type StoredPayload = {
     confidencePenalty?: number
     confidence?: number
     fidelity?: FidelityScoringV0
+    cdpError?: string
   }
   snappedAt?: string
   snapFolder?: string
@@ -165,7 +166,7 @@ const saveSnapFiles = async (payload: StoredPayload) => {
     : undefined
   const metaPayload: StoredPayload = {
     ...payload,
-    exportMode: 'replay-first-capture-with-portable-fallback-export',
+    exportMode: payload.exportMode,
     exportTier: payload.exportTier || 'fallback',
     exportDiagnostics: {
       source: payload.exportDiagnostics?.source,
@@ -233,6 +234,13 @@ const saveSnapFiles = async (payload: StoredPayload) => {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'REGISTER_ACTIVE_REQUEST') {
+    activeRequests.set(message.requestId, message.tabId)
+    log('register_active_request', 'info', message.requestId, `tabId: ${message.tabId}`)
+    sendResponse({ ok: true })
+    return true
+  }
+
   if (message?.type === 'START_INSPECT_TAB') {
     const requestId = Math.random().toString(36).slice(2, 9)
     activeRequests.set(requestId, message.tabId)
@@ -289,6 +297,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (cropped) message.payload.element.screenshotDataUrl = cropped
 
         let cdpCapture: unknown
+        let cdpCaptureError: string | undefined
         if (tabId) {
           try {
             cdpCapture = await runCDPCapture(
@@ -303,7 +312,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             )
             log('cdp_capture_done', 'info', message.requestId)
           } catch (error) {
-            log('cdp_capture_failed', 'error', message.requestId, String(error))
+            cdpCaptureError = String(error)
+            log('cdp_capture_failed', 'error', message.requestId, cdpCaptureError)
           }
         }
 
@@ -353,6 +363,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             confidencePenalty: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidencePenalty : fallbackConfidencePenalty,
             confidence: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidence : fallbackConfidence,
             fidelity,
+            cdpError: cdpCaptureError,
           },
         }
 

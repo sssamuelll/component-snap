@@ -349,7 +349,7 @@ const isMeaningfulEmptySceneElement = (tag: string, attrs: Record<string, string
   return isCustomElementTag(tag) || hasSceneTag(tag) || hasScenePositioningStyle(attrs) || hasSceneClass(attrs)
 }
 
-const countSceneMarkedChildren = (children: Node[]) =>
+const countSceneMarkedChildren = (children: Node[]): number =>
   children.reduce((sum, child) => {
     if (child.type !== 'element') return sum
     return sum + (isLikelySceneElement(child.tag || 'div', child.attrs, child.children || []) ? 1 : 0)
@@ -390,7 +390,7 @@ const hasMultipleLayeredSceneChildren = (children: Node[]) => {
   return layeredChildren.length >= 2
 }
 
-const isLikelySceneElement = (tag: string, attrs: Record<string, string> | undefined, children: Node[]) => {
+const isLikelySceneElement = (tag: string, attrs: Record<string, string> | undefined, children: Node[]): boolean => {
   if (tag === 'svg') return true
   if (isCustomElementTag(tag)) return true
   if (hasSceneTag(tag)) return true

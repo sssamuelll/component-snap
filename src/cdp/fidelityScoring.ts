@@ -433,18 +433,24 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
 
     const hasEmptyShellFailure = portableWarnings.includes('replay-capsule-empty-shell-export')
     const hasShadowMetadataWithoutContent = portableWarnings.includes('replay-capsule-shadow-metadata-without-content')
+    const hasStructurallyThinHtml = portableWarnings.includes('replay-capsule-html-structurally-thin')
+    const hasSceneHtmlValidation = portableWarnings.includes('replay-capsule-scene-html-validated')
+    const isRenderScene = targetClass === 'render-scene'
     const outputQuality = portable.outputQuality || (hasEmptyShellFailure ? 'fragile' : undefined)
 
-    if (hasEmptyShellFailure || outputQuality === 'fragile') {
+    if (hasEmptyShellFailure || (outputQuality === 'fragile' && !isRenderScene)) {
       overallScore = Math.min(overallScore, 0.28)
       overallConfidence = Math.min(overallConfidence, 0.22)
       warnings.push('portable-output-empty-shell-gated')
       notes.unshift('portable-output-empty-shell-detected')
-    } else if (hasShadowMetadataWithoutContent || portableConfidence < 0.25) {
-      overallScore = Math.min(overallScore, 0.42)
-      overallConfidence = Math.min(overallConfidence, 0.35)
-      warnings.push('portable-output-fragile-gated')
-      notes.unshift('portable-output-fragile-detected')
+    } else if (
+      (!isRenderScene && (hasShadowMetadataWithoutContent || portableConfidence < 0.25 || hasStructurallyThinHtml)) ||
+      (isRenderScene && !hasSceneHtmlValidation && hasShadowMetadataWithoutContent)
+    ) {
+      overallScore = Math.min(overallScore, isRenderScene ? 0.52 : 0.42)
+      overallConfidence = Math.min(overallConfidence, isRenderScene ? 0.44 : 0.35)
+      warnings.push(isRenderScene ? 'portable-output-scene-fragile-gated' : 'portable-output-fragile-gated')
+      notes.unshift(isRenderScene ? 'portable-output-scene-fragile-detected' : 'portable-output-fragile-detected')
     }
   }
 

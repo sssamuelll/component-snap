@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:e2e": "playwright test playwright.e2e.spec.ts"
+    "test:e2e": "playwright test playwright.e2e.spec.ts",
+    "benchmark": "node --experimental-strip-types scripts/runBenchmark.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

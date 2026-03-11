@@ -183,23 +183,40 @@ const getPortableTargetClass = (candidateSubtree: CaptureBundleV0['candidateSubt
   return 'semantic-ui'
 }
 
-const getPortableExportMode = (targetClass: PortableTargetClass, source: PortableExportSource): PortableExportMode => {
+const getPortableExportMode = (targetClass: PortableTargetClass): PortableExportMode => {
   if (targetClass === 'render-scene') return 'render-scene-freeze'
   return 'semantic-ui-portable'
 }
 
-const analyzePortableHtml = (html: string) => {
+const analyzePortableHtml = (html: string, targetClass: PortableTargetClass) => {
   const withoutScripts = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').trim()
   const elementTags = withoutScripts.match(/<([a-zA-Z][^\s/>]*)\b[^>]*>/g) || []
   const closingTags = withoutScripts.match(/<\/([a-zA-Z][^\s/>]*)>/g) || []
   const textLength = withoutScripts.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length
   const renderedElementCount = Math.max(0, elementTags.length)
   const hasOnlyRootShell = renderedElementCount <= 1 && closingTags.length <= 1 && textLength === 0
+  const scenePrimitiveCount =
+    (withoutScripts.match(/<(canvas|svg|video|img|piece|square|cg-board|cg-container|model-viewer|three-model|spline-viewer|lottie-player|dotlottie-player|iframe)\b/gi) || [])
+      .length
+  const absolutelyPositionedCount = (withoutScripts.match(/style\s*=\s*["'][^"']*position\s*:\s*absolute/gi) || []).length
+  const sceneLayerHintCount =
+    (withoutScripts.match(/\b(class|id|data-[a-z0-9_-]+)\s*=\s*["'][^"']*(board|scene|canvas|layer|sprite|piece|square|viewport|stage|overlay|backdrop)[^"']*["']/gi) || [])
+      .length
+  const sceneStructuralSignals = scenePrimitiveCount + absolutelyPositionedCount + sceneLayerHintCount
+  const looksSceneLike = sceneStructuralSignals >= 2 || scenePrimitiveCount >= 1
+  const isStructurallyThin = renderedElementCount <= 3 && textLength <= 8
+  const shouldTreatThinHtmlAsFragile = targetClass !== 'render-scene' && isStructurallyThin
 
   return {
     renderedElementCount,
     textLength,
     hasOnlyRootShell,
+    scenePrimitiveCount,
+    absolutelyPositionedCount,
+    sceneLayerHintCount,
+    looksSceneLike,
+    isStructurallyThin,
+    shouldTreatThinHtmlAsFragile,
   }
 }
 
@@ -255,13 +272,13 @@ export const extractPortableFromReplayCapsule = (
     : ''
 
   const targetClass = getPortableTargetClass(candidateSubtree, targetSubtree)
-  const exportMode = getPortableExportMode(targetClass, 'replay-capsule')
+  const exportMode = getPortableExportMode(targetClass)
 
   const subtreeHtml = candidateSubtree?.html?.trim() || targetSubtree?.html?.trim()
   const html = subtreeHtml
     ? `${subtreeHtml}${shadowInfo}`
     : `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
-  const htmlAnalysis = analyzePortableHtml(html)
+  const htmlAnalysis = analyzePortableHtml(html, targetClass)
 
   const warnings = [
     'replay-capsule-portable-extractor-used',
@@ -275,6 +292,17 @@ export const extractPortableFromReplayCapsule = (
   warnings.push(...asArray(candidateSubtree?.warnings).map((warning) => `replay-capsule-candidate-subtree:${warning}`))
   warnings.push(`replay-capsule-target-class:${targetClass}`)
   warnings.push(`replay-capsule-export-mode:${exportMode}`)
+  warnings.push(`replay-capsule-rendered-elements:${htmlAnalysis.renderedElementCount}`)
+  warnings.push(`replay-capsule-rendered-text-length:${htmlAnalysis.textLength}`)
+
+  if (targetClass === 'render-scene') {
+    warnings.push(`replay-capsule-scene-primitives:${htmlAnalysis.scenePrimitiveCount}`)
+    warnings.push(`replay-capsule-scene-absolute-layers:${htmlAnalysis.absolutelyPositionedCount}`)
+    warnings.push(`replay-capsule-scene-layer-hints:${htmlAnalysis.sceneLayerHintCount}`)
+    if (htmlAnalysis.looksSceneLike) warnings.push('replay-capsule-scene-html-validated')
+  } else if (htmlAnalysis.shouldTreatThinHtmlAsFragile) {
+    warnings.push('replay-capsule-html-structurally-thin')
+  }
 
   if (unresolvedRequiredAssets > 0) {
     warnings.push(`replay-capsule-required-assets-unresolved:${unresolvedRequiredAssets}`)
@@ -282,8 +310,6 @@ export const extractPortableFromReplayCapsule = (
 
   if (htmlAnalysis.hasOnlyRootShell) {
     warnings.push('replay-capsule-empty-shell-export')
-    warnings.push(`replay-capsule-rendered-elements:${htmlAnalysis.renderedElementCount}`)
-    warnings.push(`replay-capsule-rendered-text-length:${htmlAnalysis.textLength}`)
     if (shadowRootCount > 0) warnings.push('replay-capsule-shadow-metadata-without-content')
     return {
       ok: false,
@@ -300,7 +326,7 @@ export const extractPortableFromReplayCapsule = (
   }
   if (targetSubtree && targetSubtree.textLength === 0) {
     warnings.push('replay-capsule-target-subtree-text-thin')
-    confidencePenalty += 0.06
+    if (targetClass !== 'render-scene') confidencePenalty += 0.06
   }
   if (shadowRootCount > 0) confidencePenalty += 0.06
   if (unresolvedRequiredAssets > 0) {

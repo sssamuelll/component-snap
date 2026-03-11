@@ -1,5 +1,6 @@
 import type { CDPClient } from './client'
-import type { CaptureSeed, NodeMappingResult } from './types'
+import type { CaptureSeed } from './types'
+import type { NodeMappingResult } from './nodeMappingTypes'
 
 interface ResolveNodeResponse {
   object?: {

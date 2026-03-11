@@ -1,0 +1,137 @@
+import type { ReplayViewerState } from '../cdp/replayViewerState.ts'
+
+const DATA_URL_PREFIX = /^data:([^;,]+)?(;base64)?,/i
+
+export const sanitizeArtifactSegment = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'artifact'
+
+export const dataUrlToBuffer = (value: string) => {
+  const match = value.match(DATA_URL_PREFIX)
+  if (!match) throw new Error('Expected a data URL artifact.')
+  const payload = value.slice(match[0].length)
+  if (match[2]) return Buffer.from(payload, 'base64')
+  return Buffer.from(decodeURIComponent(payload), 'utf8')
+}
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+export const buildPortablePreviewDocument = (input: {
+  title: string
+  html: string
+  css: string
+  js: string
+}) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(input.title)}</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100vh;
+        background: #ffffff;
+      }
+      body {
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-start;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #component-snap-frame {
+        display: inline-block !important;
+        position: relative !important;
+        isolation: isolate !important;
+        box-sizing: border-box !important;
+        min-width: 1px !important;
+        min-height: 1px !important;
+      }
+      #component-snap-root {
+        display: inline-block !important;
+        position: relative !important;
+        box-sizing: border-box !important;
+        min-width: 1px !important;
+        min-height: 1px !important;
+      }
+    </style>
+    <style>${input.css}</style>
+  </head>
+  <body>
+    <div id="component-snap-frame"><div id="component-snap-root">${input.html}</div></div>
+    <script type="module">${input.js}</script>
+  </body>
+</html>
+`
+
+export const buildReplayViewerArtifact = (state: ReplayViewerState) => {
+  const warnings = [...state.screenshotWarnings]
+  const debug = [
+    `imageSource=${state.imageSource}`,
+    `timelineEvents=${state.debug.timelineEventCount}`,
+    `missingArtifacts=${state.debug.missingArtifacts.join('|') || 'none'}`,
+    `mappingStrategy=${state.debug.mappingStrategy || 'n/a'}`,
+    `mappingConfidence=${typeof state.debug.mappingConfidence === 'number' ? state.debug.mappingConfidence.toFixed(3) : 'n/a'}`,
+  ]
+
+  const targetRect = state.targetRect
+    ? `x=${state.targetRect.x}, y=${state.targetRect.y}, width=${state.targetRect.width}, height=${state.targetRect.height}`
+    : 'n/a'
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Replay Viewer Artifact</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #f6f7fb;
+        color: #1f2430;
+      }
+      .frame {
+        display: inline-block;
+        border: 1px solid #c8d0e0;
+        background: #fff;
+        padding: 12px;
+      }
+      img {
+        display: block;
+        max-width: 100%;
+        border: 1px solid #d9deea;
+      }
+      pre {
+        white-space: pre-wrap;
+        margin: 16px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      ${state.imageSrc ? `<img alt="Replay snapshot" src="${state.imageSrc}" />` : '<p>No screenshot artifact available.</p>'}
+    </div>
+    <pre>${escapeHtml(
+      [
+        `page=${state.pageTitle} <${state.pageUrl}>`,
+        `createdAt=${state.createdAt}`,
+        `targetRect=${targetRect}`,
+        `warnings=${warnings.join('|') || 'none'}`,
+        ...debug,
+      ].join('\n'),
+    )}</pre>
+  </body>
+</html>
+`
+}

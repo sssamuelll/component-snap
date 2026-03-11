@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { captureTargetSubtree } from './targetSubtree'
-import type { CaptureSeed, NodeMappingResult } from './types'
+import type { CaptureSeed } from './types'
+import type { NodeMappingResult } from './nodeMappingTypes'
 
 const seed: CaptureSeed = {
   requestId: 'req_1',

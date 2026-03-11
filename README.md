@@ -50,6 +50,29 @@ Refer to **[Issue #2](https://github.com/sssamuelll/component-snap/issues/2)** f
 - **Build:** `@crxjs/vite-plugin`
 - **Testing:** Playwright (E2E) & Vitest (Unit)
 
+## Benchmark Harness
+
+Issue #18 adds a small benchmark harness for the current replay-first pipeline. It targets:
+
+- Google search bar
+- Reddit header
+- Lichess board
+
+Run it after building the extension:
+
+```bash
+npm run build
+npm run benchmark -- --scenario all
+```
+
+Useful flags:
+
+- `--headed` to debug extension runs interactively
+- `--update-baseline` to write `benchmarks/baselines/<scenario>/source.png`
+- `--out-dir <dir>` and `--baseline-dir <dir>` to redirect artifacts
+
+The harness writes stable JSON/TXT/PNG outputs under `benchmarks/runs/<timestamp>/...` and records honest skips/warnings when a live site cannot be automated reliably.
+
 ## 🚦 Getting Started
 
 1. **Install Dependencies:** `npm install`
