@@ -128,17 +128,19 @@ describe('extractPortableFromReplayCapsule', () => {
 
     expect(result.tier).toBe('capsule')
     expect(result.artifacts.selectedSelector).toBe('.cta')
+    expect(result.artifacts.rootSelector).toBe('[data-csnap-root="true"]')
+    expect(result.artifacts.js).toContain('const rootSelector = "[data-csnap-root=\\"true\\"]";')
     expect(result.artifacts.css).toContain('.cta, button.cta')
     expect(result.artifacts.css).toContain('--brand: #f00')
     expect(result.artifacts.css).toContain('@keyframes pulse')
-    expect(result.artifacts.html).toContain('<button class="cta"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect')
+    expect(result.artifacts.html).toContain('<div data-csnap-root="true" data-csnap-capsule-root="true" data-csnap-selector=".cta" class="cta"><button class="cta"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect')
     expect(result.artifacts.html).not.toContain('<rpl-tooltip')
     expect(result.artifacts.html).not.toContain('<path')
     expect(result.artifacts.html).toContain('component-snap-shadow-topology')
     expect(result.diagnostics.source).toBe('replay-capsule')
     expect(result.diagnostics.warnings).toContain('replay-capsule-portable-extractor-used')
     expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree-used')
-    expect(result.diagnostics.warnings).toContain('replay-capsule-rendered-elements:4')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-rendered-elements:5')
     expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-compacted-svgs:1')
     expect(result.diagnostics.warnings).toContain('replay-capsule-candidate-subtree:target-candidate-profile:anchor-dense')
     expect(result.diagnostics.confidence).toBeGreaterThan(0.4)
@@ -188,6 +190,190 @@ describe('extractPortableFromReplayCapsule', () => {
     if (!result.ok) return
     expect(result.diagnostics.warnings).toContain('replay-capsule-required-assets-unresolved:1')
     expect(result.diagnostics.confidence).toBeLessThan(0.8)
+  })
+
+  it('prefers the fuller target subtree when a semantic candidate loses wrapper integrity', () => {
+    const capture = baseCapture()
+    capture.seed.selectedSelector = 'form[role="search"]'
+    capture.seed.stableSelector = 'form[role="search"]'
+    capture.seed.targetFingerprint = {
+      tagName: 'div',
+      classList: ['A8SBwf'],
+      attributeHints: [],
+      ancestry: [],
+      boundingBox: { x: 1, y: 2, width: 688, height: 146 },
+      promotedSelectedSelector: 'form[role="search"]',
+      promotedStableSelector: 'form[role="search"]',
+    }
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = {
+        source: 'runtime-object',
+        html: '<form role="search"><div class="A8SBwf"><div class="RNNXgb"><textarea id="q"></textarea><button type="submit"></button></div></div></form>',
+        nodeCount: 5,
+        elementCount: 5,
+        textNodeCount: 0,
+        textLength: 0,
+        maxDepth: 4,
+      }
+      capture.replayCapsule.snapshot.candidateSubtree = {
+        source: 'reconstructed-subtree',
+        html: '<textarea id="q"></textarea><button type="submit"></button>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 2,
+        compactedSvgCount: 0,
+        nodeCount: 2,
+        textLength: 0,
+        quality: {
+          anchorNodeCount: 2,
+          wrapperNodeCount: 0,
+          textNodeCount: 0,
+          anchorDensity: 1,
+          wrapperDensity: 0,
+          wrapperToAnchorRatio: 0,
+          profile: 'anchor-dense',
+        },
+        reconstruction: {
+          mode: 'semantic',
+          preservedEmptyScenePrimitiveCount: 0,
+          preservedCustomElementCount: 0,
+          preservedLayeredElementCount: 0,
+        },
+        warnings: ['target-candidate-collapsed-wrappers:2', 'target-candidate-reconstruction:semantic'],
+      }
+    }
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.artifacts.html).toContain('<form role="search" data-csnap-root="true" data-csnap-capsule-root="true" data-csnap-selector="form[role=&quot;search&quot;]">')
+    expect(result.artifacts.html).toContain('class="A8SBwf"')
+    expect(result.artifacts.html).toContain('class="RNNXgb"')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-subtree-preferred-for-wrapper-integrity')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:semantic-wrapper-hints-recovered')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:semantic-wrapper-depth-recovered:3')
+  })
+
+  it('materializes the promoted export root when subtree html only contains inner content', () => {
+    const capture = baseCapture()
+    capture.seed.selectedSelector = 'form[role="search"]'
+    capture.seed.stableSelector = 'form[role="search"]'
+    capture.seed.targetFingerprint = {
+      tagName: 'div',
+      classList: ['A8SBwf'],
+      attributeHints: [],
+      ancestry: [],
+      boundingBox: { x: 1, y: 2, width: 100, height: 40 },
+      promotedSelectedSelector: 'form[role="search"]',
+      promotedStableSelector: 'form[role="search"]',
+    }
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = {
+        source: 'runtime-object',
+        html: '<button type="button"></button><textarea id="q"></textarea>',
+        nodeCount: 2,
+        elementCount: 2,
+        textNodeCount: 0,
+        textLength: 0,
+        maxDepth: 1,
+      }
+      capture.replayCapsule.snapshot.candidateSubtree = {
+        source: 'reconstructed-subtree',
+        html: '<button type="button"></button><textarea id="q"></textarea>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 1,
+        compactedSvgCount: 0,
+        nodeCount: 2,
+        textLength: 0,
+        quality: {
+          anchorNodeCount: 1,
+          wrapperNodeCount: 1,
+          textNodeCount: 0,
+          anchorDensity: 0.5,
+          wrapperDensity: 0.5,
+          wrapperToAnchorRatio: 1,
+          profile: 'anchor-dense',
+        },
+        reconstruction: {
+          mode: 'semantic',
+          preservedEmptyScenePrimitiveCount: 0,
+          preservedCustomElementCount: 0,
+          preservedLayeredElementCount: 0,
+        },
+        warnings: ['target-candidate-collapsed-wrappers:1'],
+      }
+    }
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.artifacts.html).toContain('<form data-csnap-root="true" data-csnap-capsule-root="true" data-csnap-selector="form[role=&quot;search&quot;]"><button type="button"></button><textarea id="q"></textarea></form>')
+  })
+
+  it('prefers the fuller target subtree when a render-scene candidate loses frame-chain hints', () => {
+    const capture = baseCapture()
+    capture.seed.selectedSelector = 'div.puzzle__board.main-board'
+    capture.seed.stableSelector = 'div.puzzle__board.main-board'
+    capture.seed.targetFingerprint = {
+      tagName: 'cg-board',
+      classList: [],
+      attributeHints: [],
+      ancestry: [],
+      boundingBox: { x: 1, y: 2, width: 320, height: 320 },
+      promotedSelectedSelector: 'div.puzzle__board.main-board',
+      promotedStableSelector: 'div.puzzle__board.main-board',
+    }
+
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = {
+        source: 'runtime-object',
+        html: '<div class="puzzle__board main-board"><div class="cg-wrap"><cg-container><cg-board><piece class="white king"></piece></cg-board></cg-container></div></div>',
+        nodeCount: 5,
+        elementCount: 5,
+        textNodeCount: 0,
+        textLength: 0,
+        maxDepth: 4,
+      }
+      capture.replayCapsule.snapshot.candidateSubtree = {
+        source: 'reconstructed-subtree',
+        html: '<cg-board><piece class="white king"></piece></cg-board>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 2,
+        compactedSvgCount: 0,
+        nodeCount: 2,
+        textLength: 0,
+        quality: {
+          anchorNodeCount: 1,
+          wrapperNodeCount: 2,
+          textNodeCount: 0,
+          anchorDensity: 0.5,
+          wrapperDensity: 1,
+          wrapperToAnchorRatio: 2,
+          profile: 'scene-like',
+        },
+        reconstruction: {
+          mode: 'scene-preserving',
+          preservedEmptyScenePrimitiveCount: 1,
+          preservedCustomElementCount: 1,
+          preservedLayeredElementCount: 1,
+        },
+        warnings: ['target-candidate-scene-like-subtree', 'target-candidate-reconstruction:scene-preserving'],
+      }
+    }
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.artifacts.html).toContain('class="puzzle__board main-board"')
+    expect(result.artifacts.html).toContain('class="cg-wrap"')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-subtree-preferred-for-frame-integrity')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:frame-chain-selector-hint-recovered')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:scene-frame-hints-recovered')
   })
 
   it('surfaces scene-preserving candidate exports for board-like captures', () => {

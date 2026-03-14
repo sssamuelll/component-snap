@@ -146,6 +146,8 @@ const RECONSTRUCTION_KEEP_ATTRS = new Set([
 const RECONSTRUCTION_MEANINGFUL_CONTAINER_ATTRS = new Set(['role', 'aria-label', 'aria-hidden'])
 const SCENE_CLASS_TOKENS = ['board', 'piece', 'square', 'coord', 'coords', 'layer', 'overlay', 'highlight', 'ghost', 'arrow']
 const SCENE_TAG_NAMES = new Set(['piece', 'square', 'coord', 'coords', 'cg-board', 'cg-container'])
+const SEARCH_ROOT_CLASS_TOKENS = ['rnnxgb', 'a8sbwf', 'sdkep']
+const SEARCH_DISCARD_CLASS_TOKENS = ['oMByyf', 'UbbAWe', 'XOUhue', 'plR5qb', 'Y5MKCd', 'FHRw9d']
 
 type Node = {
   type: 'element' | 'text'
@@ -603,6 +605,58 @@ const buildQualitySignals = (nodes: Node[], sceneAnalysis: SceneAnalysis) => {
   }
 }
 
+const isSearchLikeSemanticSubtree = (nodes: Node[]) => {
+  let hasSearchField = false
+  let hasSearchShell = false
+
+  const visit = (node: Node) => {
+    if (node.type !== 'element') return
+    const tag = node.tag || 'div'
+    const name = (node.attrs?.name || '').toLowerCase()
+    const role = (node.attrs?.role || '').toLowerCase()
+    const cls = (node.attrs?.class || '').toLowerCase()
+    if ((tag === 'textarea' || tag === 'input') && (name === 'q' || role === 'combobox' || cls.includes('glfyf'))) {
+      hasSearchField = true
+    }
+    if (SEARCH_ROOT_CLASS_TOKENS.some((token) => cls.includes(token)) || (tag === 'form' && role === 'search')) {
+      hasSearchShell = true
+    }
+    for (const child of node.children || []) visit(child)
+  }
+
+  for (const node of nodes) visit(node)
+  return hasSearchField && hasSearchShell
+}
+
+const shouldDiscardSearchSemanticNode = (node: Node) => {
+  if (node.type !== 'element') return false
+  const tag = node.tag || 'div'
+  const cls = (node.attrs?.class || '').toLowerCase()
+  const type = (node.attrs?.type || '').toLowerCase()
+  const role = (node.attrs?.role || '').toLowerCase()
+  const ariaLabel = (node.attrs?.['aria-label'] || '').toLowerCase()
+
+  if (tag === 'script' || tag === 'style') return true
+  if (tag === 'input' && type === 'file') return true
+  if (SEARCH_DISCARD_CLASS_TOKENS.some((token) => cls.includes(token.toLowerCase()))) return true
+  if (ariaLabel.includes('datei') || ariaLabel.includes('bilder hochladen')) return true
+  if (ariaLabel.includes('dateianhang entfernen')) return true
+  if ((node.children || []).some((child) => child.type === 'text' && (child.text || '').includes('KI‑Modus'))) return true
+  if (role === 'menu' || role === 'menuitem' || role === 'dialog') return true
+  return false
+}
+
+const pruneSearchSemanticNoise = (nodes: Node[]): Node[] => {
+  const prune = (node: Node): Node[] => {
+    if (node.type === 'text') return [{ ...node }]
+    if (shouldDiscardSearchSemanticNode(node)) return []
+    const children = (node.children || []).flatMap(prune)
+    return [{ ...node, children }]
+  }
+
+  return nodes.flatMap(prune)
+}
+
 const normalizeNode = (
   node: Node,
   stats: {
@@ -755,7 +809,10 @@ export const normalizeTargetSubtree = (subtree: TargetSubtreeV0 | undefined): Ta
   }
   const normalized = parsed.flatMap((node) => normalizeNode(node, stats, sceneAnalysis.sceneLike))
   const reconstructed = normalized.flatMap((node) => reconstructNode(node, sceneAnalysis.sceneLike))
-  const candidateNodes = reconstructed.length ? reconstructed : normalized
+  const candidateNodesBase = reconstructed.length ? reconstructed : normalized
+  const candidateNodes = !sceneAnalysis.sceneLike && isSearchLikeSemanticSubtree(candidateNodesBase)
+    ? pruneSearchSemanticNoise(candidateNodesBase)
+    : candidateNodesBase
   const html = serializeNodes(candidateNodes)
   const reconstruction = collectReconstructionSignals(candidateNodes, sceneAnalysis.sceneLike)
   const quality = buildQualitySignals(candidateNodes, sceneAnalysis)

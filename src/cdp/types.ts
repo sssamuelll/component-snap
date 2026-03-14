@@ -1,5 +1,5 @@
 export type CaptureBackend = 'extension' | 'cdp'
-import type { NodeMappingResult, TargetFingerprint } from './nodeMappingTypes'
+import type { NodeMappingResult, TargetClass, TargetFingerprint, TargetSubtype } from './nodeMappingTypes'
 
 export interface CaptureBoundingBox {
   x: number
@@ -25,6 +25,9 @@ export interface CaptureSeed {
     kind?: string
   }
   targetFingerprint?: TargetFingerprint
+  targetClassHint?: TargetClass
+  targetSubtypeHint?: TargetSubtype
+  targetClassReasons?: string[]
   actionTraceEvents?: ActionTraceEventV0[]
   mutationTraceEvents?: MutationTraceEventV0[]
 }

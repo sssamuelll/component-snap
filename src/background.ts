@@ -3,7 +3,7 @@ import { scoreCaptureFidelity } from './cdp/fidelityScoring'
 import { buildFidelityExport } from './cdp/fidelityReporting'
 import { extractPortableFromReplayCapsule } from './cdp/portableExtraction'
 import type { ActionTraceEventV0, CaptureBundleV0, CaptureSeed, FidelityScoringV0, MutationTraceEventV0 } from './cdp/types'
-import type { TargetFingerprint } from './cdp/nodeMappingTypes'
+import type { TargetClass, TargetFingerprint, TargetSubtype } from './cdp/nodeMappingTypes'
 import type { PortableFallbackExtractionDiagnostics } from './portableFallback/extractor'
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -75,6 +75,9 @@ type StoredPayload = {
     selectedSelector?: string
     portableFallback?: PortableFallbackExtractionDiagnostics
     targetFingerprint?: TargetFingerprint
+    targetClassHint?: TargetClass
+    targetSubtypeHint?: TargetSubtype
+    targetClassReasons?: string[]
   }
 }
 
@@ -88,6 +91,19 @@ type DebugEvent = {
 
 const activeRequests = new Map<string, number>()
 const debugLog: DebugEvent[] = []
+
+const backgroundGlobal = globalThis as typeof globalThis & {
+  __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => { ok: boolean }
+  __componentSnapGetDebugLogs?: () => DebugEvent[]
+}
+
+backgroundGlobal.__componentSnapRegisterActiveRequest = (requestId: string, tabId: number) => {
+  activeRequests.set(requestId, tabId)
+  log('register_active_request', 'info', requestId, `tabId: ${tabId}`)
+  return { ok: true }
+}
+
+backgroundGlobal.__componentSnapGetDebugLogs = () => [...debugLog]
 
 const log = (event: string, level: 'info' | 'error' = 'info', requestId?: string, detail?: string) => {
   console.log(`[${level}] ${event} ${requestId || ''}`, detail || '')
@@ -111,8 +127,9 @@ const deriveProvenance = (payload: StoredPayload) => {
     payload.element?.targetFingerprint?.selectedSelector ||
     payload.element?.selectedSelector ||
     payload.element?.selector
-  const exportedRootSelector = payload.exportTier === 'fallback' ? '[data-csnap-root="true"]' : promotedSelector
-  const bootstrapRootSelector = payload.exportTier === 'fallback' ? '[data-csnap-root="true"]' : promotedSelector
+  const artifactHasMaterializedRoot = /data-csnap-root="true"/i.test(payload.element?.html || '')
+  const exportedRootSelector = artifactHasMaterializedRoot ? '[data-csnap-root="true"]' : promotedSelector
+  const bootstrapRootSelector = artifactHasMaterializedRoot ? '[data-csnap-root="true"]' : promotedSelector
   const renderRootSelector = promotedSelector
 
   return {
@@ -223,6 +240,9 @@ const buildCaptureSeed = (
     textPreview: payload.element?.text,
     kind: payload.element?.kind,
   },
+  targetClassHint: payload.element?.targetFingerprint?.targetClassHint || payload.element?.targetClassHint,
+  targetSubtypeHint: payload.element?.targetFingerprint?.targetSubtypeHint || payload.element?.targetSubtypeHint,
+  targetClassReasons: payload.element?.targetFingerprint?.targetClassReasons || payload.element?.targetClassReasons,
   targetFingerprint: payload.element?.targetFingerprint,
   actionTraceEvents,
   mutationTraceEvents,
@@ -436,7 +456,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                   css: capsuleExtraction.artifacts.css,
                   freezeHtml: capsuleExtraction.artifacts.freezeHtml,
                   js: capsuleExtraction.artifacts.js,
-                  selector: capsuleExtraction.artifacts.selectedSelector || message.payload?.element?.selector,
+                  selectedSelector: capsuleExtraction.artifacts.selectedSelector || message.payload?.element?.selectedSelector,
                 }
               : {}),
           },

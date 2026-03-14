@@ -271,6 +271,94 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.warnings).toContain('fidelity-portable-diagnostics:portable-fallback-no-keyframes-captured')
   })
 
+  it('boosts confidence when scene exports recover frame-preservation reasons', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'render-scene',
+        exportMode: 'render-scene-freeze',
+        warnings: [
+          'replay-capsule-target-class:render-scene',
+          'replay-capsule-scene-html-validated',
+          'replay-capsule-preservation-reason:frame-chain-selector-hint-recovered',
+          'replay-capsule-preservation-reason:scene-frame-hints-recovered',
+        ],
+        confidence: 0.64,
+      },
+    })
+
+    expect(scoring.warnings).toContain('fidelity-preservation-reason:frame-chain-selector-hint-recovered')
+    expect(scoring.warnings).toContain('fidelity-preservation-reason:scene-frame-hints-recovered')
+    expect(scoring.notes).toContain('portable-scene-structure-recovery-detected')
+    expect(scoring.notes).toContain('portable-preservation-reasons:frame-chain-selector-hint-recovered|scene-frame-hints-recovered')
+    expect(scoring.overall.score).toBeGreaterThanOrEqual(0.58)
+    expect(scoring.overall.confidence).toBeGreaterThanOrEqual(0.58)
+  })
+
+  it('boosts confidence when semantic exports recover wrapper-preservation reasons', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'semantic-ui',
+        exportMode: 'semantic-ui-portable',
+        warnings: [
+          'replay-capsule-preservation-reason:semantic-wrapper-hints-recovered',
+          'replay-capsule-preservation-reason:semantic-wrapper-depth-recovered:3',
+        ],
+        confidence: 0.59,
+      },
+    })
+
+    expect(scoring.warnings).toContain('fidelity-preservation-reason:semantic-wrapper-hints-recovered')
+    expect(scoring.warnings).toContain('fidelity-preservation-reason:semantic-wrapper-depth-recovered:3')
+    expect(scoring.notes).toContain('portable-semantic-wrapper-recovery-detected')
+    expect(scoring.notes).toContain('portable-preservation-reasons:semantic-wrapper-hints-recovered|semantic-wrapper-depth-recovered:3')
+    expect(scoring.overall.score).toBeGreaterThanOrEqual(0.58)
+    expect(scoring.overall.confidence).toBeGreaterThanOrEqual(0.56)
+  })
+
+  it('applies class-driven form-like preservation boosts', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'semantic-ui',
+        targetClassHint: 'interactive-composite',
+        targetSubtypeHint: 'form-like',
+        classReasons: ['class-evidence:form-root'],
+        exportMode: 'semantic-ui-portable',
+        confidence: 0.62,
+      },
+    })
+
+    expect(scoring.warnings).toContain('fidelity-target-class-hint:interactive-composite')
+    expect(scoring.warnings).toContain('fidelity-target-subtype-hint:form-like')
+    expect(scoring.warnings).toContain('fidelity-target-class-reason:class-evidence:form-root')
+    expect(scoring.notes).toContain('class-policy:form-like-structure-preservation')
+    expect(scoring.overall.score).toBeGreaterThanOrEqual(0.61)
+  })
+
+  it('applies class-driven semantic-leaf compactness penalties', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'semantic-ui',
+        targetClassHint: 'semantic-leaf',
+        targetSubtypeHint: 'generic',
+        exportMode: 'semantic-ui-portable',
+        warnings: ['replay-capsule-preservation-reason:semantic-wrapper-depth-recovered:6'],
+        confidence: 0.9,
+      },
+    })
+
+    expect(scoring.notes).toContain('class-policy:semantic-leaf-compactness-priority')
+    expect(scoring.warnings).toContain('fidelity-semantic-leaf-wrapper-bloat-detected')
+    expect(scoring.overall.confidence).toBeLessThanOrEqual(0.72)
+  })
+
   it('surfaces render-scene target class and export mode in fidelity diagnostics', () => {
     const scoring = scoreCaptureFidelity({
       capture: buildCapture(),

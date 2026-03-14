@@ -16,6 +16,17 @@ export interface TargetShadowContext {
   hostChain: string[]
 }
 
+export type TargetClass = 'semantic-leaf' | 'semantic-shell' | 'interactive-composite' | 'render-scene' | 'noisy-container'
+export type TargetSubtype =
+  | 'search-like'
+  | 'toolbar-like'
+  | 'card-like'
+  | 'form-like'
+  | 'board-like'
+  | 'chart-like'
+  | 'map-like'
+  | 'generic'
+
 export interface TargetFingerprint {
   stableSelector?: string
   selectedSelector?: string
@@ -36,6 +47,9 @@ export interface TargetFingerprint {
   attributeHints: TargetAttributeHint[]
   ancestry: TargetAncestryNodeSummary[]
   shadowContext?: TargetShadowContext
+  targetClassHint?: TargetClass
+  targetSubtypeHint?: TargetSubtype
+  targetClassReasons?: string[]
 }
 
 export type NodeMappingStrategy = 'runtime-structural' | 'dom-traversal' | 'selector-fallback' | 'unresolved'

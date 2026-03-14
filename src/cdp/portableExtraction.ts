@@ -1,4 +1,5 @@
 import { buildPortableFallbackComponentJs } from '../portableFallback/extractor'
+import type { TargetClass, TargetSubtype } from './nodeMappingTypes'
 import type { CaptureBundleV0, MatchedRuleV0, ReplayCapsuleV0, ResourceGraphV0, ShadowTopologyV0, StyleDeclarationV0 } from './types'
 
 type PortableExportSource = 'replay-capsule' | 'portable-fallback'
@@ -8,6 +9,9 @@ type PortableExportMode = 'semantic-ui-portable' | 'render-scene-freeze'
 export interface PortableExportDiagnostics {
   source: PortableExportSource
   targetClass: PortableTargetClass
+  targetClassHint?: TargetClass
+  targetSubtypeHint?: TargetSubtype
+  classReasons?: string[]
   exportMode: PortableExportMode
   warnings: string[]
   confidence: number
@@ -21,6 +25,7 @@ export interface PortableExportArtifacts {
   js: string
   freezeHtml: string
   selectedSelector: string
+  rootSelector: string
 }
 
 export interface PortableReplayExtractionSuccess {
@@ -173,7 +178,15 @@ const getRequiredUnresolvedAssetCount = (resourceGraph: ResourceGraphV0 | undefi
 const hasAnyUsableRule = (rules: MatchedRuleV0[] | undefined) =>
   asArray(rules).some((rule) => rule.selectorList?.length && asArray(rule.declarations).some((declaration) => !declaration.disabled))
 
-const getPortableTargetClass = (candidateSubtree: CaptureBundleV0['candidateSubtree'], targetSubtree: CaptureBundleV0['targetSubtree']): PortableTargetClass => {
+const getPortableTargetClass = (
+  candidateSubtree: CaptureBundleV0['candidateSubtree'],
+  targetSubtree: CaptureBundleV0['targetSubtree'],
+  targetClassHint?: TargetClass,
+): PortableTargetClass => {
+  if (targetClassHint === 'render-scene') return 'render-scene'
+  if (['semantic-leaf', 'semantic-shell', 'interactive-composite', 'noisy-container'].includes(targetClassHint || '')) {
+    return 'semantic-ui'
+  }
   if (candidateSubtree?.quality?.profile === 'scene-like') return 'render-scene'
   if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') return 'render-scene'
   if (asArray(candidateSubtree?.warnings).some((warning) => warning.includes('scene-like') || warning.includes('scene-preserving'))) {
@@ -186,6 +199,206 @@ const getPortableTargetClass = (candidateSubtree: CaptureBundleV0['candidateSubt
 const getPortableExportMode = (targetClass: PortableTargetClass): PortableExportMode => {
   if (targetClass === 'render-scene') return 'render-scene-freeze'
   return 'semantic-ui-portable'
+}
+
+const selectorTokens = (selector: string) => {
+  const firstCompound = selector
+    .trim()
+    .split(/\s+|>|\+|~/)[0]
+    ?.replace(/:{1,2}[a-zA-Z0-9_-]+(\([^)]*\))?/g, '')
+    .trim()
+
+  if (!firstCompound) return { id: '', classes: [] as string[] }
+
+  return {
+    id: firstCompound.match(/#([a-zA-Z0-9_-]+)/)?.[1] || '',
+    classes: Array.from(firstCompound.matchAll(/\.([a-zA-Z0-9_-]+)/g)).map((match) => match[1]),
+  }
+}
+
+const htmlContainsSelectorFrameHints = (html: string, selector: string) => {
+  const { id, classes } = selectorTokens(selector)
+  if (id && new RegExp(`id=["'][^"']*${id}[^"']*["']`, 'i').test(html)) return true
+  if (classes.some((className) => new RegExp(`class=["'][^"']*\\b${className}\\b[^"']*["']`, 'i').test(html))) return true
+  return false
+}
+
+const hasSceneFrameHints = (html: string) => /(cg-wrap|cg-container|main-board|analyse__board|board-shell|scene-layer)/i.test(html)
+
+const countElementTags = (html: string) => (html.match(/<([a-zA-Z][^\s/>]*)\b[^>]*>/g) || []).length
+
+const SEMANTIC_WRAPPER_CLASS_HINTS = ['A8SBwf', 'RNNXgb', 'search', 'searchbox', 'form']
+
+const hasSemanticWrapperHints = (html: string, selector: string) => {
+  const lower = html.toLowerCase()
+  if (/<form\b/i.test(html)) return true
+  const { id, classes } = selectorTokens(selector)
+  if (id && new RegExp(`id=["'][^"']*${id}[^"']*["']`, 'i').test(html)) return true
+  if (classes.some((className) => new RegExp(`class=["'][^"']*\\b${className}\\b[^"']*["']`, 'i').test(html))) return true
+  return SEMANTIC_WRAPPER_CLASS_HINTS.some((token) => lower.includes(token.toLowerCase()))
+}
+
+const isSearchShellHtml = (html: string, selector: string) => {
+  const lower = html.toLowerCase()
+  return (
+    /name=["']q["']/.test(lower) &&
+    (/<textarea\b/i.test(html) || /<input\b/i.test(html)) &&
+    (lower.includes('rnnxgb') || lower.includes('a8sbwf') || selector.toLowerCase().includes('rnnxgb') || selector.toLowerCase().includes('a8sbwf') || selector.toLowerCase().includes('role="search"'))
+  )
+}
+
+const sanitizeSearchShellHtml = (html: string) => {
+  let sanitized = html
+  sanitized = sanitized.replace(/<input\b[^>]*type=["']file["'][^>]*>/gi, '')
+  sanitized = sanitized.replace(/<ul\b[^>]*role=["']menu["'][^>]*>[\s\S]*?<\/ul>/gi, '')
+  sanitized = sanitized.replace(/<button\b[^>]*aria-label=["'][^"']*(Dateien oder Bilder hochladen|Dateianhang entfernen)[^"']*["'][^>]*>[\s\S]*?<\/button>/gi, '')
+  sanitized = sanitized.replace(/<button\b[^>]*class=["'][^"']*\bplR5qb\b[^"']*["'][^>]*>[\s\S]*?<\/button>/gi, '')
+  sanitized = sanitized.replace(/<div\b[^>]*class=["'][^"']*\boMByyf\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
+  sanitized = sanitized.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').trim()
+  return sanitized
+}
+
+const sanitizeFormLikeHtml = (html: string) => {
+  let sanitized = html
+  sanitized = sanitized.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+  sanitized = sanitized.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+  sanitized = sanitized.replace(/<input\b[^>]*type=["']hidden["'][^>]*>/gi, '')
+  sanitized = sanitized.replace(/<[^>]+\s(hidden|aria-hidden=["']true["'])[^>]*>[\s\S]*?<\/[^>]+>/gi, '')
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').trim()
+  return sanitized
+}
+
+const sanitizeLeafHtml = (html: string) => {
+  let sanitized = html
+  sanitized = sanitized.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+  sanitized = sanitized.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+  sanitized = sanitized.replace(/<([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>\s*(<\1\b[^>]*>[\s\S]*<\/\1>)\s*<\/\1>/gi, '$2')
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').trim()
+  return sanitized
+}
+
+const pickExportSubtreeHtml = (input: {
+  selectedSelector: string
+  targetClass: PortableTargetClass
+  targetClassHint?: TargetClass
+  targetSubtypeHint?: TargetSubtype
+  candidateSubtreeHtml?: string
+  targetSubtreeHtml?: string
+}) => {
+  const candidateHtmlRaw = input.candidateSubtreeHtml?.trim() || ''
+  const targetHtmlRaw = input.targetSubtreeHtml?.trim() || ''
+  const shouldSanitizeSearchShell =
+    input.targetClass === 'semantic-ui' &&
+    (input.targetSubtypeHint === 'search-like' || isSearchShellHtml(candidateHtmlRaw, input.selectedSelector) || isSearchShellHtml(targetHtmlRaw, input.selectedSelector))
+  const shouldSanitizeFormLike = input.targetClassHint === 'interactive-composite' && input.targetSubtypeHint === 'form-like'
+  const shouldSanitizeLeaf = input.targetClassHint === 'semantic-leaf'
+
+  const sanitizeByClass = (html: string) => {
+    if (shouldSanitizeSearchShell) return sanitizeSearchShellHtml(html)
+    if (shouldSanitizeFormLike) return sanitizeFormLikeHtml(html)
+    if (shouldSanitizeLeaf) return sanitizeLeafHtml(html)
+    return html
+  }
+
+  const candidateHtml = sanitizeByClass(candidateHtmlRaw)
+  const targetHtml = sanitizeByClass(targetHtmlRaw)
+  const reasons: string[] = []
+
+  if (!candidateHtml) {
+    reasons.push('candidate-subtree-missing')
+    return { html: targetHtml, reasons }
+  }
+  if (!targetHtml) {
+    reasons.push('target-subtree-missing')
+    return { html: candidateHtml, reasons }
+  }
+
+  if (input.targetClass === 'render-scene') {
+    const candidateHasSelectorFrame = htmlContainsSelectorFrameHints(candidateHtml, input.selectedSelector)
+    const targetHasSelectorFrame = htmlContainsSelectorFrameHints(targetHtml, input.selectedSelector)
+    const candidateHasSceneFrame = hasSceneFrameHints(candidateHtml)
+    const targetHasSceneFrame = hasSceneFrameHints(targetHtml)
+
+    if (!candidateHasSelectorFrame && targetHasSelectorFrame) reasons.push('frame-chain-selector-hint-recovered')
+    if (!candidateHasSceneFrame && targetHasSceneFrame) reasons.push('scene-frame-hints-recovered')
+    if (input.targetSubtypeHint === 'board-like' && targetHasSceneFrame && !candidateHasSceneFrame) {
+      reasons.push('class-policy:board-like-prefers-framed-target')
+    }
+
+    if (reasons.length > 0) {
+      return { html: targetHtml, reasons }
+    }
+
+    return { html: candidateHtml, reasons }
+  }
+
+  const candidateHasSemanticWrappers = hasSemanticWrapperHints(candidateHtml, input.selectedSelector)
+  const targetHasSemanticWrappers = hasSemanticWrapperHints(targetHtml, input.selectedSelector)
+  const candidateElementCount = countElementTags(candidateHtml)
+  const targetElementCount = countElementTags(targetHtml)
+
+  if (!candidateHasSemanticWrappers && targetHasSemanticWrappers) {
+    reasons.push('semantic-wrapper-hints-recovered')
+  }
+
+  if (targetElementCount >= candidateElementCount + 2 && targetHasSemanticWrappers) {
+    reasons.push(`semantic-wrapper-depth-recovered:${targetElementCount - candidateElementCount}`)
+  }
+
+  if (input.targetClassHint === 'semantic-shell' && input.targetSubtypeHint === 'search-like' && targetHasSemanticWrappers) {
+    if (targetElementCount >= candidateElementCount) reasons.push('class-policy:search-like-prefers-wrappered-target')
+  }
+
+  if (input.targetClassHint === 'interactive-composite' && input.targetSubtypeHint === 'form-like') {
+    if (targetHasSemanticWrappers && targetElementCount >= candidateElementCount) {
+      reasons.push('class-policy:form-like-prefers-structured-target')
+    }
+  }
+
+  if (input.targetClassHint === 'semantic-leaf') {
+    if (candidateElementCount <= Math.max(3, targetElementCount) && candidateElementCount > 0) {
+      return { html: candidateHtml, reasons: ['class-policy:semantic-leaf-prefers-compact-candidate'] }
+    }
+  }
+
+  if (reasons.length > 0) {
+    return { html: targetHtml, reasons }
+  }
+
+  return { html: candidateHtml, reasons }
+}
+
+const htmlStartsWithTag = (html: string, tagName: string) => {
+  const trimmed = html.trim()
+  return new RegExp(`^<${tagName}\\b`, 'i').test(trimmed)
+}
+
+const materializeExportRoot = (selector: string, subtreeHtml: string | undefined, shadowInfo: string) => {
+  const skeleton = buildSkeletonFromSelector(selector)
+  const attributes = [
+    `data-csnap-root="true"`,
+    `data-csnap-capsule-root="true"`,
+    `data-csnap-selector="${escapeAttribute(selector)}"`,
+    skeleton.id ? `id="${escapeAttribute(skeleton.id)}"` : '',
+    skeleton.classList.length ? `class="${escapeAttribute(skeleton.classList.join(' '))}"` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const trimmedSubtreeHtml = subtreeHtml?.trim() || ''
+  if (trimmedSubtreeHtml && htmlStartsWithTag(trimmedSubtreeHtml, skeleton.tagName)) {
+    const existingRootTag = trimmedSubtreeHtml.match(/^<([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/)?.[0]
+    if (existingRootTag) {
+      return `${trimmedSubtreeHtml.replace(existingRootTag, `${existingRootTag.slice(0, -1)} ${attributes}>`)}${shadowInfo}`
+    }
+  }
+
+  if (trimmedSubtreeHtml) {
+    return `<${skeleton.tagName} ${attributes}>${trimmedSubtreeHtml}</${skeleton.tagName}>${shadowInfo}`
+  }
+
+  return `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
 }
 
 const analyzePortableHtml = (html: string, targetClass: PortableTargetClass) => {
@@ -253,31 +466,30 @@ export const extractPortableFromReplayCapsule = (
     return { ok: false, reason: 'css-serialize-empty', warnings: ['replay-capsule-css-serialize-empty'] }
   }
 
-  const skeleton = buildSkeletonFromSelector(selectedSelector)
   const unresolvedRequiredAssets = getRequiredUnresolvedAssetCount(resourceGraph)
   const shadowMetadata = serializeShadowTopology(shadowTopology)
   const shadowRootCount = asArray(shadowTopology?.roots).length
-
-  const attributes = [
-    `data-csnap-capsule-root="true"`,
-    `data-csnap-selector="${escapeAttribute(selectedSelector)}"`,
-    skeleton.id ? `id="${escapeAttribute(skeleton.id)}"` : '',
-    skeleton.classList.length ? `class="${escapeAttribute(skeleton.classList.join(' '))}"` : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
 
   const shadowInfo = shadowMetadata
     ? `\n<script type="application/json" id="component-snap-shadow-topology">${escapeHtml(shadowMetadata)}</script>`
     : ''
 
-  const targetClass = getPortableTargetClass(candidateSubtree, targetSubtree)
+  const targetClassHint = capture.seed.targetClassHint || capture.seed.targetFingerprint?.targetClassHint
+  const targetSubtypeHint = capture.seed.targetSubtypeHint || capture.seed.targetFingerprint?.targetSubtypeHint
+  const targetClassReasons = capture.seed.targetClassReasons || capture.seed.targetFingerprint?.targetClassReasons
+  const targetClass = getPortableTargetClass(candidateSubtree, targetSubtree, targetClassHint)
   const exportMode = getPortableExportMode(targetClass)
 
-  const subtreeHtml = candidateSubtree?.html?.trim() || targetSubtree?.html?.trim()
-  const html = subtreeHtml
-    ? `${subtreeHtml}${shadowInfo}`
-    : `<${skeleton.tagName} ${attributes}></${skeleton.tagName}>${shadowInfo}`
+  const exportSubtreeChoice = pickExportSubtreeHtml({
+    selectedSelector,
+    targetClass,
+    targetClassHint,
+    targetSubtypeHint,
+    candidateSubtreeHtml: candidateSubtree?.html,
+    targetSubtreeHtml: targetSubtree?.html,
+  })
+  const subtreeHtml = exportSubtreeChoice.html
+  const html = materializeExportRoot(selectedSelector, subtreeHtml, shadowInfo)
   const htmlAnalysis = analyzePortableHtml(html, targetClass)
 
   const warnings = [
@@ -286,6 +498,17 @@ export const extractPortableFromReplayCapsule = (
     ...asArray(replayCapsule.diagnostics?.warnings).map((warning) => `replay-capsule-diagnostics:${warning}`),
   ]
   if (candidateSubtree?.html?.trim()) warnings.push('replay-capsule-candidate-subtree-used')
+  if (targetClass === 'semantic-ui' && (targetSubtypeHint === 'search-like' || isSearchShellHtml(candidateSubtree?.html?.trim() || '', selectedSelector) || isSearchShellHtml(targetSubtree?.html?.trim() || '', selectedSelector))) {
+    warnings.push('replay-capsule-search-shell-sanitized')
+  }
+  if (targetClassHint) warnings.push(`replay-capsule-target-class-hint:${targetClassHint}`)
+  if (targetSubtypeHint) warnings.push(`replay-capsule-target-subtype-hint:${targetSubtypeHint}`)
+  if (targetClassReasons?.length) warnings.push(...targetClassReasons.map((reason) => `replay-capsule-target-class-reason:${reason}`))
+  if (subtreeHtml === (targetSubtree?.html?.trim() || '') && candidateSubtree?.html?.trim()) {
+    if (targetClass === 'render-scene') warnings.push('replay-capsule-target-subtree-preferred-for-frame-integrity')
+    else warnings.push('replay-capsule-target-subtree-preferred-for-wrapper-integrity')
+    warnings.push(...exportSubtreeChoice.reasons.map((reason) => `replay-capsule-preservation-reason:${reason}`))
+  }
   if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') {
     warnings.push('replay-capsule-scene-preserving-subtree-used')
   }
@@ -356,11 +579,15 @@ export const extractPortableFromReplayCapsule = (
       css,
       freezeHtml: html,
       selectedSelector,
-      js: buildPortableFallbackComponentJs(selectedSelector),
+      rootSelector: '[data-csnap-root="true"]',
+      js: buildPortableFallbackComponentJs('[data-csnap-root="true"]'),
     },
     diagnostics: {
       source: 'replay-capsule',
       targetClass,
+      targetClassHint: capture.seed.targetFingerprint?.targetClassHint,
+      targetSubtypeHint: capture.seed.targetFingerprint?.targetSubtypeHint,
+      classReasons: capture.seed.targetFingerprint?.targetClassReasons,
       exportMode,
       warnings,
       confidencePenalty,

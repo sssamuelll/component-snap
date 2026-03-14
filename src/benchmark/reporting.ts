@@ -6,6 +6,9 @@ export type BenchmarkScenarioStatus = 'passed' | 'failed' | 'skipped'
 export interface BenchmarkArtifactRecord {
   path: string
   pixelDiff?: PixelDiffMetricsV0
+  structuralWarnings?: string[]
+  structuralEvidence?: string[]
+  preservationReasons?: string[]
 }
 
 export interface BenchmarkBaselineRecord {
@@ -28,6 +31,11 @@ export interface BenchmarkScenarioResult {
   url: string
   selector?: string
   exportTier?: string
+  expectedTargetClass?: string
+  expectedTargetSubtype?: string
+  targetClassHint?: string
+  targetSubtypeHint?: string
+  targetClassReasons?: string[]
   startedAt: string
   completedAt: string
   warnings: string[]
@@ -53,6 +61,17 @@ const summarizePixelDiff = (label: string, metrics?: PixelDiffMetricsV0) => {
   return `${label}: mismatch=${formatRatio(metrics.mismatchRatio)} pixels=${metrics.mismatchPixels} dimensionsMatch=${metrics.dimensionsMatch}`
 }
 
+const summarizeStructuralChecks = (label: string, artifact?: BenchmarkArtifactRecord) => {
+  if (!artifact?.structuralWarnings?.length && !artifact?.structuralEvidence?.length && !artifact?.preservationReasons?.length) {
+    return `${label}: not available`
+  }
+
+  const warnings = artifact.structuralWarnings?.length ? artifact.structuralWarnings.join(', ') : 'none'
+  const evidence = artifact.structuralEvidence?.length ? artifact.structuralEvidence.join(', ') : 'none'
+  const preservation = artifact.preservationReasons?.length ? artifact.preservationReasons.join(', ') : 'none'
+  return `${label}: warnings=${warnings} | evidence=${evidence} | preservation=${preservation}`
+}
+
 export const buildScenarioReport = (input: {
   result: BenchmarkScenarioResult
   replayScoring?: FidelityScoringV0
@@ -68,6 +87,11 @@ export const buildScenarioReport = (input: {
     `URL: ${result.url}`,
     `Selector: ${result.selector || 'n/a'}`,
     `Export tier: ${result.exportTier || 'n/a'}`,
+    `Expected target class: ${result.expectedTargetClass || 'n/a'}`,
+    `Expected target subtype: ${result.expectedTargetSubtype || 'n/a'}`,
+    `Target class: ${result.targetClassHint || 'n/a'}`,
+    `Target subtype: ${result.targetSubtypeHint || 'n/a'}`,
+    `Target class reasons: ${result.targetClassReasons?.join(', ') || 'n/a'}`,
     `Started: ${result.startedAt}`,
     `Completed: ${result.completedAt}`,
   ]
@@ -89,6 +113,7 @@ export const buildScenarioReport = (input: {
       }).trimEnd(),
     )
     lines.push(summarizePixelDiff('Replay diff', result.replay?.artifact?.pixelDiff))
+    lines.push(summarizeStructuralChecks('Replay structure', result.replay?.artifact))
   }
 
   if (portableScoring) {
@@ -100,6 +125,7 @@ export const buildScenarioReport = (input: {
       }).trimEnd(),
     )
     lines.push(summarizePixelDiff('Portable diff', result.portable?.artifact?.pixelDiff))
+    lines.push(summarizeStructuralChecks('Portable structure', result.portable?.artifact))
   }
 
   return `${lines.join('\n')}\n`
@@ -124,6 +150,10 @@ export const buildSuiteReport = (suite: BenchmarkSuiteResult) => {
       `${scenario.scenarioId}: ${scenario.status}`,
       `selector=${scenario.selector || 'n/a'}`,
       `tier=${scenario.exportTier || 'n/a'}`,
+      `expectedClass=${scenario.expectedTargetClass || 'n/a'}`,
+      `expectedSubtype=${scenario.expectedTargetSubtype || 'n/a'}`,
+      `class=${scenario.targetClassHint || 'n/a'}`,
+      `subtype=${scenario.targetSubtypeHint || 'n/a'}`,
     ]
     if (typeof scenario.replay?.score === 'number') {
       summary.push(`replay=${formatRatio(scenario.replay.score)}`)

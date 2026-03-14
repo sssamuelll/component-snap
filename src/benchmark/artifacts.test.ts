@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPortablePreviewDocument, buildReplayViewerArtifact, dataUrlToBuffer, sanitizeArtifactSegment } from './artifacts'
+import {
+  buildPortablePreviewDocument,
+  buildReplayViewerArtifact,
+  dataUrlToBuffer,
+  inspectPortableArtifactStructure,
+  sanitizeArtifactSegment,
+} from './artifacts'
 import type { ReplayViewerState } from '../cdp/replayViewerState'
 
 describe('benchmark artifacts helpers', () => {
@@ -25,6 +31,32 @@ describe('benchmark artifacts helpers', () => {
     expect(doc).toContain('<div id="component-snap-root"><button class="cta">Open</button></div>')
     expect(doc).toContain('<style>.cta { color: red; }</style>')
     expect(doc).toContain('<script type="module">document.body.dataset.ready = "true"</script>')
+  })
+
+  it('detects aligned materialized roots in portable artifacts', () => {
+    const structure = inspectPortableArtifactStructure({
+      html: '<form data-csnap-root="true"><button type="button"></button></form>',
+      js: `const rootSelector = '[data-csnap-root="true"]';`,
+      expectedRootSelector: '[data-csnap-root="true"]',
+    })
+
+    expect(structure.ok).toBe(true)
+    expect(structure.warnings).toEqual([])
+    expect(structure.evidence).toContain('structure-root-materialized')
+    expect(structure.evidence).toContain('structure-bootstrap-root-aligned')
+    expect(structure.evidence).toContain('structure-expected-root-present')
+  })
+
+  it('flags scene artifacts that preserve primitives without a frame', () => {
+    const structure = inspectPortableArtifactStructure({
+      html: '<cg-board><piece class="white king"></piece></cg-board>',
+      js: 'const rootSelector = "div.puzzle__board.main-board";',
+      targetClass: 'render-scene',
+    })
+
+    expect(structure.ok).toBe(false)
+    expect(structure.warnings).toContain('structure-root-missing')
+    expect(structure.warnings).toContain('structure-scene-frame-missing')
   })
 
   it('builds a replay viewer artifact with metadata', () => {

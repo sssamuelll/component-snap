@@ -2,20 +2,36 @@ import { chromium, type BrowserContext, type Page } from '@playwright/test'
 import { access, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import http from 'node:http'
 
 import { buildReplayViewerState } from '../src/cdp/replayViewerState.ts'
 import { scoreCaptureFidelity } from '../src/cdp/fidelityScoring.ts'
 import { comparePixelDiff } from '../src/cdp/pixelDiff.ts'
 import type { CaptureBundleV0 } from '../src/cdp/types.ts'
-import { buildPortablePreviewDocument, buildReplayViewerArtifact, dataUrlToBuffer, sanitizeArtifactSegment } from '../src/benchmark/artifacts.ts'
+import {
+  buildPortablePreviewDocument,
+  buildReplayViewerArtifact,
+  dataUrlToBuffer,
+  inspectPortableArtifactStructure,
+  sanitizeArtifactSegment,
+} from '../src/benchmark/artifacts.ts'
 import { buildScenarioReport, buildSuiteReport, type BenchmarkScenarioResult, type BenchmarkSuiteResult } from '../src/benchmark/reporting.ts'
-import { benchmarkScenarios, getBenchmarkScenario, type BenchmarkScenarioDefinition } from '../src/benchmark/scenarios.ts'
+import { benchmarkScenarioGroups, benchmarkScenarios, getBenchmarkScenario, type BenchmarkScenarioDefinition } from '../src/benchmark/scenarios.ts'
 
 type PortableFallbackExtractionDiagnostics = {
   warnings?: string[]
   confidence?: number
   confidencePenalty?: number
+  targetClass?: 'semantic-ui' | 'render-scene'
+  targetClassHint?: string
+  targetSubtypeHint?: string
+  classReasons?: string[]
 }
+
+const extractPreservationReasons = (warnings: string[] | undefined) =>
+  (warnings || [])
+    .filter((warning) => warning.startsWith('replay-capsule-preservation-reason:'))
+    .map((warning) => warning.slice('replay-capsule-preservation-reason:'.length))
 
 type StoredSelection = {
   requestId?: string
@@ -25,6 +41,10 @@ type StoredSelection = {
     warnings?: string[]
     confidence?: number
     confidencePenalty?: number
+    targetClass?: 'semantic-ui' | 'render-scene'
+    targetClassHint?: string
+    targetSubtypeHint?: string
+    classReasons?: string[]
   }
   cdpCapture?: CaptureBundleV0
   element?: {
@@ -129,7 +149,10 @@ const getBenchmarkContentScriptLoader = async () => {
 const resolveScenarios = (scenarioIds: string[]) => {
   if (scenarioIds.includes('all')) return benchmarkScenarios
 
-  const scenarios = scenarioIds.map((scenarioId) => {
+  const expandedIds = scenarioIds.flatMap((scenarioId) => benchmarkScenarioGroups[scenarioId] || [scenarioId])
+  const uniqueIds = Array.from(new Set(expandedIds))
+
+  const scenarios = uniqueIds.map((scenarioId) => {
     const scenario = getBenchmarkScenario(scenarioId)
     if (!scenario) throw new Error(`Unknown benchmark scenario "${scenarioId}".`)
     return scenario
@@ -158,7 +181,13 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
   const serviceWorker = await getServiceWorker(context)
   return await serviceWorker.evaluate(async ({ captureRequestId, benchmarkPageUrl, contentScriptLoaderPath }) => {
     const chromeApi = (globalThis as unknown as { chrome: any }).chrome
+    const diagnostics: Record<string, unknown> = {
+      benchmarkPageUrl,
+      contentScriptLoaderPath,
+      attempts: [] as Record<string, unknown>[],
+    }
     const tabs = await chromeApi.tabs.query({})
+    diagnostics.tabCount = tabs.length
     const normalizedUrl = (() => {
       try {
         const url = new URL(benchmarkPageUrl)
@@ -179,19 +208,27 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
         }
       }) || tabs.find((candidate: any) => candidate?.active && candidate?.id && !String(candidate.url || '').startsWith('chrome-extension://'))
     if (!tab?.id) throw new Error(`Benchmark target tab not found for ${benchmarkPageUrl}`)
+    diagnostics.selectedTab = {
+      id: tab.id,
+      url: tab.url,
+      title: tab.title,
+      active: tab.active,
+      status: tab.status,
+    }
 
-    const registerResult = await new Promise<{ ok?: boolean; error?: string }>((resolve) => {
-      chromeApi.runtime.sendMessage({ type: 'REGISTER_ACTIVE_REQUEST', requestId: captureRequestId, tabId: tab.id }, (response: { ok?: boolean; error?: string } | undefined) => {
-        if (chromeApi.runtime.lastError) {
-          resolve({ ok: false, error: chromeApi.runtime.lastError.message })
-          return
-        }
-        resolve(response || { ok: false, error: 'No response from background.' })
-      })
-    })
+    const registerResult = (() => {
+      const workerGlobal = globalThis as typeof globalThis & {
+        __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => { ok?: boolean; error?: string }
+      }
+      return workerGlobal.__componentSnapRegisterActiveRequest?.(captureRequestId, tab.id) || {
+        ok: false,
+        error: 'Background register helper missing.',
+      }
+    })()
 
+    diagnostics.registerResult = registerResult
     if (!registerResult?.ok) {
-      return { ok: false, error: registerResult?.error || 'Could not register active request.' }
+      return { ok: false, error: registerResult?.error || 'Could not register active request.', diagnostics }
     }
 
     const ensureContentScript = async () => {
@@ -214,16 +251,22 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
             const browserGlobal = globalThis as typeof globalThis & {
               location?: { href?: string }
               document?: { readyState?: string; body?: unknown }
+              __componentSnapReady?: boolean
+              __componentSnapInjectedAt?: number
               __componentSnapProbe?: {
                 href: string
                 readyState: string
                 hasBody: boolean
+                contentReady: boolean
+                injectedAt?: number
               }
             }
             browserGlobal.__componentSnapProbe = {
               href: browserGlobal.location?.href || '',
               readyState: browserGlobal.document?.readyState || 'unknown',
               hasBody: !!browserGlobal.document?.body,
+              contentReady: !!browserGlobal.__componentSnapReady,
+              injectedAt: browserGlobal.__componentSnapInjectedAt,
             }
             return browserGlobal.__componentSnapProbe
           },
@@ -237,40 +280,59 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
     let lastError = 'Could not establish connection. Receiving end does not exist.'
 
     for (let attempt = 0; attempt < 12; attempt++) {
+      const attemptInfo: Record<string, unknown> = { attempt }
       const injected = await ensureContentScript()
       const probe = await probePage()
+      attemptInfo.injected = injected.ok ? { ok: true, resultCount: injected.execResult?.length || 0 } : { ok: false, error: injected.error }
+      attemptInfo.probe = probe.ok ? (probe.execResult?.[0]?.result || { ok: true }) : { ok: false, error: probe.error }
+      ;(diagnostics.attempts as Record<string, unknown>[]).push(attemptInfo)
       if (!injected.ok) lastError = `inject:${injected.error || 'unknown'}`
       else if (!probe.ok) lastError = `probe:${probe.error || 'unknown'}`
-      const ping = await new Promise<{ ok?: boolean; error?: string }>((resolve) => {
-        chromeApi.tabs.sendMessage(tab.id, { type: 'PING' }, (messageResponse: { ok?: boolean } | undefined) => {
-          if (chromeApi.runtime.lastError) {
-            resolve({ ok: false, error: chromeApi.runtime.lastError.message })
-            return
-          }
-          resolve(messageResponse || { ok: false, error: 'No ping response.' })
-        })
-      })
 
-      if (ping.ok) {
-        const response = await new Promise<{ ok?: boolean; requestId?: string; error?: string }>((resolve) => {
-          chromeApi.tabs.sendMessage(tab.id, { type: 'START_INSPECT', requestId: captureRequestId }, (messageResponse: { ok?: boolean } | undefined) => {
-            if (chromeApi.runtime.lastError) {
-              resolve({ ok: false, error: chromeApi.runtime.lastError.message })
-              return
-            }
-            resolve({ ok: true, requestId: captureRequestId, ...messageResponse })
-          })
-        })
-        if (response.ok) return response
-        lastError = response.error || lastError
-      } else {
-        lastError = ping.error || lastError
+      const probeState = probe.ok ? (probe.execResult?.[0]?.result as { contentReady?: boolean; readyState?: string; href?: string } | undefined) : undefined
+      if (!probeState?.contentReady) {
+        lastError = `content-not-ready:${probeState?.readyState || 'unknown'}:${probeState?.href || benchmarkPageUrl}`
+        attemptInfo.lastError = lastError
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        continue
       }
+
+      const directStart = await chromeApi.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (requestId: string) => {
+          const browserGlobal = globalThis as typeof globalThis & {
+            __componentSnapStartInspect?: (requestId: string) => { ok?: boolean; requestId?: string }
+            __componentSnapReady?: boolean
+          }
+          return {
+            ready: !!browserGlobal.__componentSnapReady,
+            start: browserGlobal.__componentSnapStartInspect?.(requestId) || { ok: false },
+          }
+        },
+        args: [captureRequestId],
+      }).catch((error: unknown) => ({ error: String(error) }))
+
+      const directResult = Array.isArray(directStart)
+        ? (directStart[0]?.result as { ready?: boolean; start?: { ok?: boolean; requestId?: string } } | undefined)
+        : undefined
+      attemptInfo.directStart = Array.isArray(directStart)
+        ? directResult || { ok: false }
+        : { ok: false, error: (directStart as { error?: string }).error || 'unknown' }
+      if (directResult?.start?.ok) {
+        diagnostics.successAttempt = attempt
+        return { ok: true, requestId: captureRequestId, diagnostics }
+      }
+
+      lastError = Array.isArray(directStart)
+        ? `direct-start-failed:ready=${String(directResult?.ready)}`
+        : String((directStart as { error?: string }).error || 'direct-start-failed')
+      attemptInfo.lastError = lastError
 
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
 
-    return { ok: false, error: lastError }
+    diagnostics.finalError = lastError
+    return { ok: false, error: lastError, diagnostics }
   }, { captureRequestId: requestId, benchmarkPageUrl: pageUrl, contentScriptLoaderPath: contentScriptLoader })
 }
 
@@ -294,12 +356,10 @@ const pollLastSelection = async (context: BrowserContext, requestId: string, tim
 const getDebugLogs = async (context: BrowserContext) => {
   const serviceWorker = await getServiceWorker(context)
   return await serviceWorker.evaluate(async () => {
-    return await new Promise((resolve) => {
-      const chromeApi = (globalThis as unknown as { chrome: any }).chrome
-      chromeApi.runtime.sendMessage({ type: 'GET_DEBUG_LOGS' }, (response: { data?: unknown[] } | undefined) =>
-        resolve(response?.data ?? []),
-      )
-    })
+    const workerGlobal = globalThis as typeof globalThis & {
+      __componentSnapGetDebugLogs?: () => unknown[]
+    }
+    return workerGlobal.__componentSnapGetDebugLogs?.() || []
   })
 }
 
@@ -362,6 +422,44 @@ const maybeReadBuffer = async (targetPath: string) => {
     return await readFile(targetPath)
   } catch {
     return null
+  }
+}
+
+const decodeInlineScenarioHtml = (url: string) => {
+  const prefix = 'data:text/html;charset=utf-8,'
+  if (!url.startsWith(prefix)) return null
+  return decodeURIComponent(url.slice(prefix.length))
+}
+
+const startInlineFixtureServer = async (scenarioId: string, html: string) => {
+  const server = http.createServer((req, res) => {
+    if ((req.url || '/') === '/favicon.ico') {
+      res.statusCode = 204
+      res.end()
+      return
+    }
+    res.setHeader('content-type', 'text/html; charset=utf-8')
+    res.end(html)
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error(`Could not bind inline fixture server for ${scenarioId}`)
+
+  return {
+    url: `http://127.0.0.1:${address.port}/${sanitizeArtifactSegment(scenarioId)}.html`,
+    close: async () => {
+      server.closeIdleConnections?.()
+      server.closeAllConnections?.()
+      await Promise.race([
+        new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+        new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+      ])
+    },
   }
 }
 
@@ -449,10 +547,17 @@ const runScenario = async (
   const notes: string[] = []
   let requestId = `benchmark-${scenario.id}-${Date.now()}`
   const page = await context.newPage()
+  let fixtureServer: { url: string; close: () => Promise<void> } | null = null
 
   try {
     await page.setViewportSize(scenario.viewport)
-    await page.goto(scenario.url, { waitUntil: scenario.waitUntil || 'domcontentloaded', timeout: options.timeoutMs })
+    const inlineScenarioHtml = decodeInlineScenarioHtml(scenario.url)
+    if (inlineScenarioHtml) {
+      fixtureServer = await startInlineFixtureServer(scenario.id, inlineScenarioHtml)
+      await page.goto(fixtureServer.url, { waitUntil: scenario.waitUntil || 'load', timeout: options.timeoutMs })
+    } else {
+      await page.goto(scenario.url, { waitUntil: scenario.waitUntil || 'domcontentloaded', timeout: options.timeoutMs })
+    }
     warnings.push(...((await scenario.prepare?.(page)) || []))
     await page.bringToFront()
 
@@ -479,8 +584,10 @@ const runScenario = async (
 
     const captureStart = await requestCapture(context, requestId, page.url(), contentScriptLoader)
     if (!captureStart?.ok || !captureStart.requestId) {
+      await writeJson(path.join(scenarioOutputDir, 'capture-start.json'), captureStart)
       throw new Error(`Could not start inspection: ${captureStart?.error || 'unknown error'}`)
     }
+    await writeJson(path.join(scenarioOutputDir, 'capture-start.json'), captureStart)
     requestId = captureStart.requestId
     await page.waitForSelector('#__component_snap_blocker__', { state: 'attached', timeout: 8_000 })
     const box = await target.locator.boundingBox()
@@ -544,11 +651,27 @@ const runScenario = async (
 
     let portableScoring = undefined
     let portableArtifact = undefined
+    let portableStructureWarnings: string[] = []
+    let portableStructureEvidence: string[] = []
+    const portablePreservationReasons = extractPreservationReasons(selection.exportDiagnostics?.warnings)
     if (selection.element?.html && selection.element?.css && selection.element?.js) {
       const portableDir = path.join(scenarioOutputDir, 'portable')
       await writeText(path.join(portableDir, 'component.html'), selection.element.html)
       await writeText(path.join(portableDir, 'component.css'), selection.element.css)
       await writeText(path.join(portableDir, 'component.js'), selection.element.js)
+
+      const portableStructure = inspectPortableArtifactStructure({
+        html: selection.element.html,
+        js: selection.element.js,
+        expectedRootSelector: selection.exportTier === 'fallback' || /data-csnap-root="true"/i.test(selection.element.html)
+          ? '[data-csnap-root="true"]'
+          : undefined,
+        targetClass: selection.exportDiagnostics?.targetClass,
+      })
+      portableStructureWarnings = portableStructure.warnings
+      portableStructureEvidence = portableStructure.evidence
+      await writeJson(path.join(portableDir, 'structure.json'), portableStructure)
+
       const portableBuffer = await renderPortableArtifact(
         context,
         path.join(portableDir, 'render.png'),
@@ -567,6 +690,9 @@ const runScenario = async (
         portableArtifact = {
           path: path.join(portableDir, 'render.png'),
           pixelDiff: portableDiff,
+          structuralWarnings: portableStructureWarnings,
+          structuralEvidence: portableStructureEvidence,
+          preservationReasons: portablePreservationReasons,
         }
       } else {
         warnings.push('benchmark-portable-render-skipped')
@@ -575,13 +701,30 @@ const runScenario = async (
       warnings.push('benchmark-portable-artifacts-unavailable')
     }
 
+    const structuralFailureWarnings = portableStructureWarnings.filter((warning) =>
+      ['structure-root-missing', 'structure-bootstrap-root-mismatch', 'structure-scene-frame-missing'].includes(warning),
+    )
+    if (structuralFailureWarnings.length) {
+      warnings.push(...structuralFailureWarnings.map((warning) => `benchmark-structural-failure:${warning}`))
+      notes.push('Portable artifact failed structural invariants before fidelity comparison.')
+    }
+
     const result: BenchmarkScenarioResult = {
       scenarioId: scenario.id,
       title: scenario.title,
-      status: replayScoring || portableScoring ? 'passed' : 'skipped',
+      status: structuralFailureWarnings.length
+        ? 'failed'
+        : replayScoring || portableScoring
+          ? 'passed'
+          : 'skipped',
       url: scenario.url,
       selector: target.selector,
       exportTier: selection.exportTier,
+      expectedTargetClass: scenario.expectedTargetClass,
+      expectedTargetSubtype: scenario.expectedTargetSubtype,
+      targetClassHint: selection.exportDiagnostics?.targetClassHint || selection.cdpCapture?.seed?.targetClassHint,
+      targetSubtypeHint: selection.exportDiagnostics?.targetSubtypeHint || selection.cdpCapture?.seed?.targetSubtypeHint,
+      targetClassReasons: selection.exportDiagnostics?.classReasons || selection.cdpCapture?.seed?.targetClassReasons,
       startedAt,
       completedAt: new Date().toISOString(),
       warnings: [...warnings, ...(selection.exportDiagnostics?.warnings || [])],
@@ -634,7 +777,23 @@ const runScenario = async (
     }
   } finally {
     await page.close().catch(() => undefined)
+    await fixtureServer?.close().catch(() => undefined)
   }
+}
+
+const launchBenchmarkContext = async (extensionPath: string, headless: boolean) => {
+  const userDataDir = path.join(os.tmpdir(), `component-snap-benchmark-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  await mkdir(userDataDir, { recursive: true })
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    channel: 'chromium',
+    headless,
+    args: [
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+    ],
+  })
+
+  return { context, userDataDir }
 }
 
 const main = async () => {
@@ -646,49 +805,39 @@ const main = async () => {
   await mkdir(runOutputDir, { recursive: true })
   await mkdir(options.baselineDir, { recursive: true })
 
-  const userDataDir = path.join(os.tmpdir(), `component-snap-benchmark-${Date.now()}`)
-  await mkdir(userDataDir, { recursive: true })
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    channel: 'chromium',
-    headless: options.headless,
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-    ],
-  })
-
   const startedAt = new Date().toISOString()
+  const results: BenchmarkScenarioResult[] = []
 
-  try {
-    const results: BenchmarkScenarioResult[] = []
-    for (const scenario of scenarios) {
-      const scenarioOutputDir = path.join(runOutputDir, sanitizeArtifactSegment(scenario.id))
-      await mkdir(scenarioOutputDir, { recursive: true })
+  for (const scenario of scenarios) {
+    const scenarioOutputDir = path.join(runOutputDir, sanitizeArtifactSegment(scenario.id))
+    await mkdir(scenarioOutputDir, { recursive: true })
+
+    const { context, userDataDir } = await launchBenchmarkContext(extensionPath, options.headless)
+    try {
       const result = await runScenario(context, scenario, options, scenarioOutputDir, contentScriptLoader)
       results.push(result)
       await writeJson(path.join(scenarioOutputDir, 'result.json'), result)
-      // Keep one scenario per page state for repeatability.
-      for (const page of context.pages()) {
-        if (!page.isClosed()) await page.close().catch(() => undefined)
-      }
+    } finally {
+      await Promise.race([
+        context.close().catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ])
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined)
     }
-
-    const suite: BenchmarkSuiteResult = {
-      suite: options.suite,
-      version: options.version,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      outputDir: runOutputDir,
-      scenarios: results,
-    }
-
-    await writeJson(path.join(runOutputDir, 'summary.json'), suite)
-    await writeText(path.join(runOutputDir, 'summary.txt'), buildSuiteReport(suite))
-    console.log(`Benchmark run complete: ${runOutputDir}`)
-  } finally {
-    await context.close().catch(() => undefined)
-    await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined)
   }
+
+  const suite: BenchmarkSuiteResult = {
+    suite: options.suite,
+    version: options.version,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    outputDir: runOutputDir,
+    scenarios: results,
+  }
+
+  await writeJson(path.join(runOutputDir, 'summary.json'), suite)
+  await writeText(path.join(runOutputDir, 'summary.txt'), buildSuiteReport(suite))
+  console.log(`Benchmark run complete: ${runOutputDir}`)
 }
 
 await main()

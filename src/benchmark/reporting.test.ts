@@ -93,6 +93,11 @@ describe('benchmark reporting', () => {
         url: 'https://example.com',
         selector: '.target',
         exportTier: 'capsule',
+        expectedTargetClass: 'semantic-shell',
+        expectedTargetSubtype: 'search-like',
+        targetClassHint: 'semantic-shell',
+        targetSubtypeHint: 'search-like',
+        targetClassReasons: ['class-evidence:search-field-present', 'class-evidence:functional-wrapper-present'],
         startedAt: '2026-03-09T12:00:00.000Z',
         completedAt: '2026-03-09T12:01:00.000Z',
         warnings: ['warning-a'],
@@ -108,6 +113,8 @@ describe('benchmark reporting', () => {
               baselineDimensions: { width: 160, height: 48 },
               candidateDimensions: { width: 160, height: 48 },
             },
+            structuralWarnings: [],
+            structuralEvidence: ['structure-root-materialized'],
           },
         },
         portable: {
@@ -121,6 +128,9 @@ describe('benchmark reporting', () => {
               baselineDimensions: { width: 160, height: 48 },
               candidateDimensions: { width: 160, height: 48 },
             },
+            structuralWarnings: ['structure-bootstrap-root-mismatch'],
+            structuralEvidence: ['structure-root-materialized'],
+            preservationReasons: ['semantic-wrapper-hints-recovered', 'semantic-wrapper-depth-recovered:3'],
           },
         },
       },
@@ -134,7 +144,14 @@ describe('benchmark reporting', () => {
     expect(report).toContain('Replay Fidelity')
     expect(report).toContain('Portable Fidelity')
     expect(report).toContain('Benchmark: component-snap-benchmark:example:replay @ v1')
+    expect(report).toContain('Expected target class: semantic-shell')
+    expect(report).toContain('Expected target subtype: search-like')
+    expect(report).toContain('Target class: semantic-shell')
+    expect(report).toContain('Target subtype: search-like')
+    expect(report).toContain('Target class reasons: class-evidence:search-field-present, class-evidence:functional-wrapper-present')
     expect(report).toContain('Portable diff: mismatch=0.040 pixels=8 dimensionsMatch=true')
+    expect(report).toContain('Replay structure: warnings=none | evidence=structure-root-materialized | preservation=none')
+    expect(report).toContain('Portable structure: warnings=structure-bootstrap-root-mismatch | evidence=structure-root-materialized | preservation=semantic-wrapper-hints-recovered, semantic-wrapper-depth-recovered:3')
   })
 
   it('builds a compact suite summary', () => {
@@ -152,6 +169,11 @@ describe('benchmark reporting', () => {
           url: 'https://www.google.com',
           selector: 'textarea[name="q"]',
           exportTier: 'capsule',
+          expectedTargetClass: 'semantic-shell',
+          expectedTargetSubtype: 'search-like',
+          targetClassHint: 'semantic-shell',
+          targetSubtypeHint: 'search-like',
+          targetClassReasons: ['class-evidence:search-field-present'],
           startedAt: '2026-03-09T12:00:00.000Z',
           completedAt: '2026-03-09T12:01:00.000Z',
           warnings: ['warning-a'],
@@ -166,6 +188,6 @@ describe('benchmark reporting', () => {
 
     expect(report).toContain('Suite: component-snap-benchmark @ v1')
     expect(report).toContain('Results: passed=1 failed=0 skipped=0')
-    expect(report).toContain('google-search-bar: passed | selector=textarea[name="q"] | tier=capsule | replay=0.910 | portable=0.820 | warnings=1')
+    expect(report).toContain('google-search-bar: passed | selector=textarea[name="q"] | tier=capsule | expectedClass=semantic-shell | expectedSubtype=search-like | class=semantic-shell | subtype=search-like | replay=0.910 | portable=0.820 | warnings=1')
   })
 })

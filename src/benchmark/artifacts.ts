@@ -24,6 +24,72 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 
+export interface PortableArtifactStructureCheck {
+  ok: boolean
+  warnings: string[]
+  evidence: string[]
+}
+
+const detectBootstrapRootSelector = (js: string) => {
+  const match = js.match(/const\s+rootSelector\s*=\s*(["'])((?:\\.|(?!\1).)*)\1/)
+  const raw = match?.[2] || ''
+  return raw.replace(/\\([\\"'])/g, '$1')
+}
+
+export const inspectPortableArtifactStructure = (input: {
+  html: string
+  js: string
+  expectedRootSelector?: string
+  targetClass?: 'semantic-ui' | 'render-scene'
+}): PortableArtifactStructureCheck => {
+  const warnings: string[] = []
+  const evidence: string[] = []
+  const html = input.html || ''
+  const js = input.js || ''
+  const bootstrapRootSelector = detectBootstrapRootSelector(js)
+  const hasMaterializedRoot = /data-csnap-root="true"/i.test(html)
+  const hasCapsuleRoot = /data-csnap-capsule-root="true"/i.test(html)
+  const hasScenePrimitive = /<cg-board\b|<piece\b|<square\b/i.test(html)
+  const hasSceneFrame = /puzzle__board|cg-wrap|cg-container|data-csnap-root="true"/i.test(html)
+
+  if (hasMaterializedRoot) evidence.push('structure-root-materialized')
+  else warnings.push('structure-root-missing')
+
+  if (hasCapsuleRoot) evidence.push('structure-capsule-root-materialized')
+
+  if (bootstrapRootSelector) {
+    evidence.push(`structure-bootstrap-selector:${bootstrapRootSelector}`)
+    if (bootstrapRootSelector === '[data-csnap-root="true"]' && hasMaterializedRoot) {
+      evidence.push('structure-bootstrap-root-aligned')
+    } else if (hasMaterializedRoot) {
+      warnings.push('structure-bootstrap-root-mismatch')
+    }
+  } else {
+    warnings.push('structure-bootstrap-selector-missing')
+  }
+
+  if (input.expectedRootSelector) {
+    if (input.expectedRootSelector === '[data-csnap-root="true"]' && hasMaterializedRoot) {
+      evidence.push('structure-expected-root-present')
+    } else if (input.expectedRootSelector !== '[data-csnap-root="true"]' && html.includes(input.expectedRootSelector)) {
+      evidence.push('structure-expected-root-present')
+    } else {
+      warnings.push(`structure-expected-root-missing:${input.expectedRootSelector}`)
+    }
+  }
+
+  if (input.targetClass === 'render-scene' || hasScenePrimitive) {
+    if (hasSceneFrame) evidence.push('structure-scene-frame-present')
+    else warnings.push('structure-scene-frame-missing')
+  }
+
+  return {
+    ok: warnings.length === 0,
+    warnings,
+    evidence,
+  }
+}
+
 export const buildPortablePreviewDocument = (input: {
   title: string
   html: string

@@ -1,5 +1,17 @@
 import { buildStableSelector, classifyComponent } from './core/snap'
+
+const contentWindow = window as typeof window & {
+  __componentSnapReady?: boolean
+  __componentSnapInjectedAt?: number
+  __componentSnapLoadMeta?: Record<string, unknown>
+  __componentSnapStartInspect?: (requestId: string) => { ok: boolean; requestId: string }
+  __componentSnapStopInspect?: () => { ok: boolean }
+}
+
+contentWindow.__componentSnapReady = true
+contentWindow.__componentSnapInjectedAt = Date.now()
 import type { ActionTraceEventTypeV0, ActionTraceEventV0, MutationTraceActionRefV0, MutationTraceEventV0 } from './cdp/types'
+import type { TargetClass, TargetSubtype } from './cdp/nodeMappingTypes'
 import {
   buildPortableFallbackComponentJs,
   extractPortableFallbackSubtree,
@@ -12,6 +24,12 @@ type ContentMessage =
   | { type: 'START_INSPECT'; requestId: string }
   | { type: 'STOP_INSPECT' }
   | { type: 'CAPTURE_DONE'; requestId: string; folder?: string }
+
+type TargetClassification = {
+  targetClass: TargetClass
+  targetSubtype: TargetSubtype
+  reasons: string[]
+}
 
 type ElementSnap = {
   title: string; url: string; selection: string;
@@ -46,6 +64,9 @@ type ElementSnap = {
         shadowDepth: number
         hostChain: string[]
       }
+      targetClassHint?: TargetClass
+      targetSubtypeHint?: TargetSubtype
+      targetClassReasons?: string[]
     }
   }
 }
@@ -87,6 +108,8 @@ const TRACEABLE_MUTATION_ATTRS = new Set([
 const SCENE_TAG_NAMES = new Set(['piece', 'square', 'coord', 'coords', 'cg-board', 'cg-container', 'cg-wrap'])
 const SCENE_CLASS_TOKENS = ['board', 'puzzle__board', 'main-board', 'cg-wrap', 'overlay', 'coords']
 const SCENE_FRAME_CLASS_TOKENS = ['puzzle__board', 'main-board', 'cg-wrap', 'board', 'viewport', 'stage']
+const SEARCH_SHELL_CLASS_TOKENS = ['rnnxgb', 'a8sbwf', 'searchbox', 'search', 'input-wrapper']
+const SEARCH_PREFERRED_CLASS_TOKENS = ['rnnxgb', 'a8sbwf']
 
 const findVisualRoot = (target: HTMLElement) => {
   let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
@@ -95,6 +118,45 @@ const findVisualRoot = (target: HTMLElement) => {
     const cls = (el.className?.toString() || '').toLowerCase()
     return SCENE_TAG_NAMES.has(tag) || SCENE_CLASS_TOKENS.some((token) => cls.includes(token))
   }
+  const getSearchShellScore = (el: HTMLElement) => {
+    const tag = el.tagName.toLowerCase()
+    const cls = (el.className?.toString() || '').toLowerCase()
+    const box = el.getBoundingClientRect()
+    const area = Math.max(1, box.width * box.height)
+    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight)
+    const areaRatio = area / viewportArea
+    const hasSearchField = !!el.querySelector('textarea[name="q"], input[name="q"], textarea[role="combobox"], input[role="combobox"]')
+    const hasControls = el.querySelectorAll('button, svg, input[type="submit"], [role="button"]').length >= 1
+    if (!hasSearchField) return -1000
+    if (areaRatio > 0.35) return -1000
+
+    let score = 0
+    if (SEARCH_PREFERRED_CLASS_TOKENS.some((token) => cls.includes(token))) score += 300
+    if (tag === 'form' && el.getAttribute('role') === 'search') score += 220
+    if (SEARCH_SHELL_CLASS_TOKENS.some((token) => cls.includes(token))) score += 120
+    if (hasControls) score += 60
+    score -= Math.round(areaRatio * 200)
+    return score
+  }
+
+  const isSearchShellCandidate = (el: HTMLElement) => getSearchShellScore(el) > 0
+
+  const isSearchTarget = (() => {
+    const tag = target.tagName.toLowerCase()
+    if (tag === 'textarea' || tag === 'input') {
+      const name = (target.getAttribute('name') || '').toLowerCase()
+      const role = (target.getAttribute('role') || '').toLowerCase()
+      const cls = (target.className?.toString() || '').toLowerCase()
+      if (name === 'q' || role === 'combobox' || cls.includes('glfyf')) return true
+    }
+    let curr: HTMLElement | null = target
+    for (let depth = 0; depth < 8 && curr && curr !== document.body; depth++) {
+      if (isSearchShellCandidate(curr)) return true
+      curr = curr.parentElement
+    }
+    return false
+  })()
+
   const isSceneFrameCandidate = (el: HTMLElement) => {
     const tag = el.tagName.toLowerCase()
     const cls = (el.className?.toString() || '').toLowerCase()
@@ -132,12 +194,22 @@ const findVisualRoot = (target: HTMLElement) => {
   }
   let curr = target
   let bestSceneFrame: HTMLElement | null = null
+  let bestSearchShell: HTMLElement | null = null
+  let bestSearchShellScore = -Infinity
   for (let depth = 0; depth < 15 && curr && curr !== document.body; depth++) {
     if (getScore(curr) > 30) best = curr
     if (isSceneTarget && isSceneFrameCandidate(curr)) bestSceneFrame = curr
+    if (isSearchTarget) {
+      const searchScore = getSearchShellScore(curr)
+      if (searchScore > bestSearchShellScore) {
+        bestSearchShellScore = searchScore
+        bestSearchShell = searchScore > 0 ? curr : bestSearchShell
+      }
+    }
     curr = curr.parentElement as HTMLElement
   }
   if (isSceneTarget && bestSceneFrame) return bestSceneFrame
+  if (isSearchTarget && bestSearchShell) return bestSearchShell
   return best
 }
 
@@ -194,29 +266,139 @@ const getShadowContext = (el: HTMLElement) => {
   }
 }
 
+const hasChartSignals = (target: HTMLElement, root: HTMLElement) => {
+  const cls = `${target.className?.toString() || ''} ${root.className?.toString() || ''}`.toLowerCase()
+  const svgCount = root.querySelectorAll('svg').length + (root.tagName.toLowerCase() === 'svg' ? 1 : 0)
+  const canvasCount = root.querySelectorAll('canvas').length + (root.tagName.toLowerCase() === 'canvas' ? 1 : 0)
+  const pathCount = root.querySelectorAll('path').length
+  const polylineCount = root.querySelectorAll('polyline, polygon').length
+  const lineCount = root.querySelectorAll('line').length
+  const rectCount = root.querySelectorAll('rect').length
+  const textCount = root.querySelectorAll('text').length
+  const chartKeywords = ['chart', 'graph', 'plot', 'series', 'trend', 'analytics', 'axis']
+  return (svgCount + canvasCount) >= 1 && (
+    pathCount >= 2 ||
+    polylineCount >= 1 ||
+    lineCount >= 4 ||
+    rectCount >= 6 ||
+    textCount >= 3 ||
+    chartKeywords.some((token) => cls.includes(token))
+  )
+}
+
+const hasToolbarSignals = (target: HTMLElement, root: HTMLElement) => {
+  const role = (root.getAttribute('role') || target.getAttribute('role') || '').toLowerCase()
+  const controls = Array.from(root.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')) as HTMLElement[]
+  const directControlChildren = Array.from(root.children).filter((child) => {
+    const el = child as HTMLElement
+    const tag = el.tagName.toLowerCase()
+    const childRole = (el.getAttribute('role') || '').toLowerCase()
+    return tag === 'button' || childRole === 'button'
+  })
+  const textLength = toCompactText(root.textContent || '').length
+  const box = root.getBoundingClientRect()
+  const isWide = box.width > box.height * 2
+  return role === 'toolbar' || (controls.length >= 3 && directControlChildren.length >= 3 && isWide && textLength <= 40)
+}
+
+const hasNoisyContainerSignals = (root: HTMLElement) => {
+  const headings = root.querySelectorAll('h1, h2, h3').length
+  const paragraphs = root.querySelectorAll('p').length
+  const badges = root.querySelectorAll('[class*="badge"], [class*="pill"]').length
+  const cards = root.querySelectorAll('[class*="card"]').length
+  const buttons = root.querySelectorAll('button, [role="button"]').length
+  const progressLike = root.querySelectorAll('progress, [role="progressbar"]').length
+  const divs = root.querySelectorAll('div').length
+  const textLength = toCompactText(root.textContent || '').length
+  const box = root.getBoundingClientRect()
+  const area = Math.max(1, box.width * box.height)
+  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight)
+  const areaRatio = area / viewportArea
+  const multiRegion = root.children.length >= 2 && Array.from(root.children).filter((child) => (child as HTMLElement).getBoundingClientRect().width > 0).length >= 2
+  return areaRatio > 0.12 && headings >= 1 && paragraphs >= 1 && multiRegion && (
+    badges >= 1 || cards >= 1 || progressLike >= 1 || buttons >= 2 || divs >= 8 || textLength > 120
+  )
+}
+
+const classifyTarget = (target: HTMLElement, captureRoot?: HTMLElement): TargetClassification => {
+  const root = captureRoot || target
+  const reasons: string[] = []
+  const tag = target.tagName.toLowerCase()
+  const rootTag = root.tagName.toLowerCase()
+  const targetCls = (target.className?.toString() || '').toLowerCase()
+  const rootCls = (root.className?.toString() || '').toLowerCase()
+
+  const isSearchLike =
+    ((tag === 'textarea' || tag === 'input') && (((target.getAttribute('name') || '').toLowerCase() === 'q') || ((target.getAttribute('role') || '').toLowerCase() === 'combobox') || targetCls.includes('glfyf'))) ||
+    rootCls.includes('rnnxgb') || rootCls.includes('a8sbwf') || (rootTag === 'form' && (root.getAttribute('role') || '').toLowerCase() === 'search')
+  if (isSearchLike) {
+    reasons.push('class-evidence:search-field-present', 'class-evidence:functional-wrapper-present')
+    return { targetClass: 'semantic-shell', targetSubtype: 'search-like', reasons }
+  }
+
+  const isSceneLike = SCENE_TAG_NAMES.has(tag) || SCENE_TAG_NAMES.has(rootTag) || SCENE_CLASS_TOKENS.some((token) => rootCls.includes(token))
+  if (isSceneLike) {
+    reasons.push('class-evidence:scene-primitives-present', 'class-evidence:frame-chain-required')
+    return { targetClass: 'render-scene', targetSubtype: 'board-like', reasons }
+  }
+
+  if (hasChartSignals(target, root)) {
+    reasons.push('class-evidence:chart-primitives-present', 'class-evidence:scene-visualization-dominant')
+    return { targetClass: 'render-scene', targetSubtype: 'chart-like', reasons }
+  }
+
+  if (rootTag === 'form') {
+    reasons.push('class-evidence:form-root')
+    return { targetClass: 'interactive-composite', targetSubtype: 'form-like', reasons }
+  }
+
+  if (hasToolbarSignals(target, root)) {
+    reasons.push('class-evidence:toolbar-cluster-present')
+    return { targetClass: 'semantic-shell', targetSubtype: 'toolbar-like', reasons }
+  }
+
+  if (['button', 'input', 'textarea', 'select', 'img', 'svg'].includes(tag) && root === target) {
+    reasons.push('class-evidence:leaf-interactive-node')
+    return { targetClass: 'semantic-leaf', targetSubtype: 'generic', reasons }
+  }
+
+  if (hasNoisyContainerSignals(root)) {
+    reasons.push('class-evidence:multi-region-dense-container')
+    return { targetClass: 'noisy-container', targetSubtype: 'generic', reasons }
+  }
+
+  reasons.push('class-evidence:bounded-shell-default')
+  return { targetClass: 'semantic-shell', targetSubtype: 'generic', reasons }
+}
+
 const buildTargetFingerprint = (target: HTMLElement, captureRoot?: HTMLElement) => {
-  const rect = target.getBoundingClientRect()
   const promotedRoot = captureRoot && captureRoot !== target ? captureRoot : undefined
+  const fingerprintRoot = promotedRoot || target
+  const rect = fingerprintRoot.getBoundingClientRect()
+  const classification = classifyTarget(target, captureRoot)
   return {
-    stableSelector: buildStableSelector(target),
-    selectedSelector: buildStableSelector(target),
+    stableSelector: buildStableSelector(fingerprintRoot),
+    selectedSelector: buildStableSelector(fingerprintRoot),
     promotedStableSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
     promotedSelectedSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
-    tagName: target.tagName.toLowerCase(),
-    id: target.id || undefined,
-    classList: Array.from(target.classList),
-    textPreview: toCompactText(target.textContent || '').slice(0, 300) || undefined,
+    tagName: fingerprintRoot.tagName.toLowerCase(),
+    id: fingerprintRoot.id || undefined,
+    classList: Array.from(fingerprintRoot.classList),
+    textPreview: toCompactText(fingerprintRoot.textContent || '').slice(0, 300) || undefined,
     boundingBox: {
       x: rect.left,
       y: rect.top,
       width: rect.width,
       height: rect.height,
     },
-    siblingIndex: getSiblingIndex(target),
-    childCount: target.children.length,
-    attributeHints: getAttributeHints(target),
-    ancestry: getAncestrySummary(target),
-    shadowContext: getShadowContext(target),
+    siblingIndex: getSiblingIndex(fingerprintRoot),
+    childCount: fingerprintRoot.children.length,
+    attributeHints: getAttributeHints(fingerprintRoot),
+    ancestry: getAncestrySummary(fingerprintRoot),
+    shadowContext: getShadowContext(fingerprintRoot),
+    targetClassHint: classification.targetClass,
+    targetSubtypeHint: classification.targetSubtype,
+    targetClassReasons: classification.reasons,
   }
 }
 
@@ -511,6 +693,12 @@ const onKeyDown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); stopInspect() }
 }
 
+export const onExecute = (meta?: Record<string, unknown>) => {
+  contentWindow.__componentSnapReady = true
+  contentWindow.__componentSnapInjectedAt = Date.now()
+  contentWindow.__componentSnapLoadMeta = meta || {}
+}
+
 const startInspect = (requestId: string) => {
   if (isInspecting) return
   isInspecting = true; isProcessing = false; currentRequestId = requestId
@@ -527,6 +715,16 @@ const startInspect = (requestId: string) => {
   window.addEventListener('input', onGlobalInput, true)
   window.addEventListener('focusin', onGlobalFocusIn, true)
   window.addEventListener('keydown', onKeyDown, true)
+}
+
+contentWindow.__componentSnapStartInspect = (requestId: string) => {
+  startInspect(requestId)
+  return { ok: true, requestId }
+}
+
+contentWindow.__componentSnapStopInspect = () => {
+  stopInspect()
+  return { ok: true }
 }
 
 chrome.runtime.onMessage.addListener((message: ContentMessage, _sender, sendResponse) => {

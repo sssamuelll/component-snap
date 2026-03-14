@@ -10,6 +10,9 @@ import type {
 export interface FidelityPortableDiagnosticsInput {
   source?: 'replay-capsule' | 'portable-fallback'
   targetClass?: 'semantic-ui' | 'render-scene'
+  targetClassHint?: string
+  targetSubtypeHint?: string
+  classReasons?: string[]
   exportMode?: 'semantic-ui-portable' | 'render-scene-freeze'
   warnings?: string[]
   confidencePenalty?: number
@@ -289,6 +292,11 @@ const buildStructuralScore = (capture: CaptureBundleV0 | undefined): FidelityDim
     score += 0.08
     confidence += 0.1
     evidence.push('structure-target-fingerprint-present')
+    if (fingerprint.targetClassHint) evidence.push(`structure-target-class-hint:${fingerprint.targetClassHint}`)
+    if (fingerprint.targetSubtypeHint) evidence.push(`structure-target-subtype-hint:${fingerprint.targetSubtypeHint}`)
+    if (fingerprint.targetClassReasons?.length) {
+      evidence.push(...fingerprint.targetClassReasons.map((reason) => `structure-target-class-reason:${reason}`))
+    }
   } else {
     warnings.push('structure-target-fingerprint-missing')
   }
@@ -422,6 +430,12 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
       overallScore = Math.min(overallScore, 0.82)
       overallConfidence = Math.min(overallConfidence, 0.8)
     }
+    const targetClassHint = portable.targetClassHint
+    const targetSubtypeHint = portable.targetSubtypeHint
+    if (targetClassHint) warnings.push(`fidelity-target-class-hint:${targetClassHint}`)
+    if (targetSubtypeHint) warnings.push(`fidelity-target-subtype-hint:${targetSubtypeHint}`)
+    if (portable.classReasons?.length) warnings.push(...portable.classReasons.map((reason: string) => `fidelity-target-class-reason:${reason}`))
+
     if (targetClass === 'render-scene') {
       notes.unshift('render-scene-target-detected')
       notes.unshift(`render-scene-export-mode:${exportMode}`)
@@ -429,14 +443,66 @@ export const scoreCaptureFidelity = (input: ScoreCaptureFidelityInput): Fidelity
         overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.58))
         overallConfidence = Math.max(Math.min(overallConfidence, 0.72), Math.min(portableConfidence, 0.58))
       }
+      if (targetSubtypeHint === 'board-like') {
+        overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.64))
+        overallConfidence = Math.max(overallConfidence, Math.min(portableConfidence, 0.62))
+        notes.unshift('class-policy:board-like-scene-tolerance')
+      }
     }
 
     const hasEmptyShellFailure = portableWarnings.includes('replay-capsule-empty-shell-export')
     const hasShadowMetadataWithoutContent = portableWarnings.includes('replay-capsule-shadow-metadata-without-content')
     const hasStructurallyThinHtml = portableWarnings.includes('replay-capsule-html-structurally-thin')
     const hasSceneHtmlValidation = portableWarnings.includes('replay-capsule-scene-html-validated')
+    const preservationReasons = portableWarnings
+      .filter((warning) => warning.startsWith('replay-capsule-preservation-reason:'))
+      .map((warning) => warning.slice('replay-capsule-preservation-reason:'.length))
+    const hasScenePreservationRecovery = preservationReasons.some((reason) =>
+      ['frame-chain-selector-hint-recovered', 'scene-frame-hints-recovered'].includes(reason),
+    )
+    const hasSemanticPreservationRecovery = preservationReasons.some((reason) =>
+      reason === 'semantic-wrapper-hints-recovered' || reason.startsWith('semantic-wrapper-depth-recovered:'),
+    )
     const isRenderScene = targetClass === 'render-scene'
     const outputQuality = portable.outputQuality || (hasEmptyShellFailure ? 'fragile' : undefined)
+
+    if (preservationReasons.length > 0) {
+      warnings.push(...preservationReasons.map((reason) => `fidelity-preservation-reason:${reason}`))
+      notes.unshift(`portable-preservation-reasons:${preservationReasons.join('|')}`)
+    }
+
+    if (hasScenePreservationRecovery) {
+      overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.62))
+      overallConfidence = Math.max(overallConfidence, Math.min(portableConfidence, 0.6))
+      notes.unshift('portable-scene-structure-recovery-detected')
+    }
+
+    if (hasSemanticPreservationRecovery) {
+      overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.58))
+      overallConfidence = Math.max(overallConfidence, Math.min(portableConfidence, 0.56))
+      notes.unshift('portable-semantic-wrapper-recovery-detected')
+    }
+
+    if (targetClassHint === 'semantic-shell' && targetSubtypeHint === 'search-like') {
+      overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.66))
+      overallConfidence = Math.max(overallConfidence, Math.min(portableConfidence, 0.62))
+      notes.unshift('class-policy:search-like-shell-preservation')
+    }
+
+    if (targetClassHint === 'interactive-composite' && targetSubtypeHint === 'form-like') {
+      overallScore = Math.max(overallScore, Math.min(portableConfidence, 0.61))
+      overallConfidence = Math.max(overallConfidence, Math.min(portableConfidence, 0.58))
+      notes.unshift('class-policy:form-like-structure-preservation')
+    }
+
+    if (targetClassHint === 'semantic-leaf') {
+      overallScore = Math.min(overallScore, 0.88)
+      notes.unshift('class-policy:semantic-leaf-compactness-priority')
+      if (portableWarnings.some((warning) => warning.includes('semantic-wrapper-depth-recovered'))) {
+        overallConfidence = Math.min(overallConfidence, 0.72)
+        warnings.push('fidelity-semantic-leaf-wrapper-bloat-detected')
+      }
+    }
 
     if (hasEmptyShellFailure || (outputQuality === 'fragile' && !isRenderScene)) {
       overallScore = Math.min(overallScore, 0.28)
