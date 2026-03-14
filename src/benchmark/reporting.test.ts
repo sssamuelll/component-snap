@@ -92,6 +92,10 @@ describe('benchmark reporting', () => {
         status: 'passed',
         url: 'https://example.com',
         selector: '.target',
+        originalSelector: '.target > button',
+        promotedSelector: '.target',
+        promotionReason: 'promotion:visual-bounded-root',
+        promotionPath: ['button.cta', 'div.target'],
         exportTier: 'capsule',
         expectedTargetClass: 'semantic-shell',
         expectedTargetSubtype: 'search-like',
@@ -148,6 +152,10 @@ describe('benchmark reporting', () => {
     expect(report).toContain('Expected target subtype: search-like')
     expect(report).toContain('Target class: semantic-shell')
     expect(report).toContain('Target subtype: search-like')
+    expect(report).toContain('Original selector: .target > button')
+    expect(report).toContain('Promoted selector: .target')
+    expect(report).toContain('Promotion reason: promotion:visual-bounded-root')
+    expect(report).toContain('Promotion path: button.cta -> div.target')
     expect(report).toContain('Target class reasons: class-evidence:search-field-present, class-evidence:functional-wrapper-present')
     expect(report).toContain('Portable diff: mismatch=0.040 pixels=8 dimensionsMatch=true')
     expect(report).toContain('Replay structure: warnings=none | evidence=structure-root-materialized | preservation=none')
@@ -168,6 +176,10 @@ describe('benchmark reporting', () => {
           status: 'passed',
           url: 'https://www.google.com',
           selector: 'textarea[name="q"]',
+          originalSelector: 'textarea[name="q"]',
+          promotedSelector: 'form[role="search"]',
+          promotionReason: 'promotion:search-shell-root',
+          promotionPath: ['textarea[name="q"]', 'form[role="search"]'],
           exportTier: 'capsule',
           expectedTargetClass: 'semantic-shell',
           expectedTargetSubtype: 'search-like',
@@ -188,6 +200,6 @@ describe('benchmark reporting', () => {
 
     expect(report).toContain('Suite: component-snap-benchmark @ v1')
     expect(report).toContain('Results: passed=1 failed=0 skipped=0')
-    expect(report).toContain('google-search-bar: passed | selector=textarea[name="q"] | tier=capsule | expectedClass=semantic-shell | expectedSubtype=search-like | class=semantic-shell | subtype=search-like | replay=0.910 | portable=0.820 | warnings=1')
+    expect(report).toContain('google-search-bar: passed | selector=textarea[name="q"] | original=textarea[name="q"] | promoted=form[role="search"] | promotion=promotion:search-shell-root | tier=capsule | expectedClass=semantic-shell | expectedSubtype=search-like | class=semantic-shell | subtype=search-like | replay=0.910 | portable=0.820 | warnings=1')
   })
 })

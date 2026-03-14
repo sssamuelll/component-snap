@@ -324,7 +324,7 @@ describe('scoreCaptureFidelity', () => {
       capture: buildCapture(),
       portableDiagnostics: {
         source: 'replay-capsule',
-        targetClass: 'semantic-ui',
+        targetClass: 'interactive-composite',
         targetClassHint: 'interactive-composite',
         targetSubtypeHint: 'form-like',
         classReasons: ['class-evidence:form-root'],
@@ -345,7 +345,7 @@ describe('scoreCaptureFidelity', () => {
       capture: buildCapture(),
       portableDiagnostics: {
         source: 'replay-capsule',
-        targetClass: 'semantic-ui',
+        targetClass: 'semantic-leaf',
         targetClassHint: 'semantic-leaf',
         targetSubtypeHint: 'generic',
         exportMode: 'semantic-ui-portable',
@@ -377,6 +377,26 @@ describe('scoreCaptureFidelity', () => {
     expect(scoring.warnings).toContain('fidelity-export-mode:render-scene-freeze')
     expect(scoring.notes).toContain('render-scene-target-detected')
     expect(scoring.notes).toContain('render-scene-export-mode:render-scene-freeze')
+  })
+
+  it('preserves specific semantic target classes while keeping semantic-ui export mode', () => {
+    const scoring = scoreCaptureFidelity({
+      capture: buildCapture(),
+      portableDiagnostics: {
+        source: 'replay-capsule',
+        targetClass: 'noisy-container',
+        targetClassHint: 'noisy-container',
+        targetSubtypeHint: 'generic',
+        exportMode: 'semantic-ui-portable',
+        warnings: ['replay-capsule-target-class:noisy-container'],
+        confidence: 0.72,
+      },
+    })
+
+    expect(scoring.targetClass).toBe('noisy-container')
+    expect(scoring.exportMode).toBe('semantic-ui-portable')
+    expect(scoring.warnings).toContain('fidelity-target-class:noisy-container')
+    expect(scoring.warnings).toContain('fidelity-export-mode:semantic-ui-portable')
   })
 
   it('does not apply generic fragile gating to validated render-scene exports', () => {

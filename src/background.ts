@@ -219,34 +219,39 @@ const buildCaptureSeed = (
   clipRect?: ClipRect,
   actionTraceEvents?: ActionTraceEventV0[],
   mutationTraceEvents?: MutationTraceEventV0[],
-): CaptureSeed => ({
-  requestId,
-  tabId,
-  pageUrl: payload.url,
-  pageTitle: payload.title,
-  stableSelector:
-    payload.element?.targetFingerprint?.promotedStableSelector ||
-    payload.element?.targetFingerprint?.stableSelector ||
-    payload.element?.selector,
-  selectedSelector:
-    payload.element?.targetFingerprint?.promotedSelectedSelector ||
-    payload.element?.targetFingerprint?.selectedSelector ||
-    payload.element?.selector,
-  boundingBox: clipRect,
-  elementHint: {
-    tagName: payload.element?.tag,
-    id: payload.element?.id,
-    classList: payload.element?.classes,
-    textPreview: payload.element?.text,
-    kind: payload.element?.kind,
-  },
-  targetClassHint: payload.element?.targetFingerprint?.targetClassHint || payload.element?.targetClassHint,
-  targetSubtypeHint: payload.element?.targetFingerprint?.targetSubtypeHint || payload.element?.targetSubtypeHint,
-  targetClassReasons: payload.element?.targetFingerprint?.targetClassReasons || payload.element?.targetClassReasons,
-  targetFingerprint: payload.element?.targetFingerprint,
-  actionTraceEvents,
-  mutationTraceEvents,
-})
+): CaptureSeed => {
+  const targetFingerprint = payload.element?.targetFingerprint
+  const targetClassHint = targetFingerprint?.targetClassHint || payload.element?.targetClassHint
+  const targetSubtypeHint = targetFingerprint?.targetSubtypeHint || payload.element?.targetSubtypeHint
+  const preferUnpromotedSelector = targetClassHint === 'render-scene' && targetSubtypeHint === 'chart-like'
+
+  return {
+    requestId,
+    tabId,
+    pageUrl: payload.url,
+    pageTitle: payload.title,
+    stableSelector: preferUnpromotedSelector
+      ? targetFingerprint?.originalStableSelector || targetFingerprint?.stableSelector || targetFingerprint?.promotedStableSelector || payload.element?.selector
+      : targetFingerprint?.promotedStableSelector || targetFingerprint?.stableSelector || payload.element?.selector,
+    selectedSelector: preferUnpromotedSelector
+      ? targetFingerprint?.originalSelectedSelector || targetFingerprint?.selectedSelector || targetFingerprint?.promotedSelectedSelector || payload.element?.selector
+      : targetFingerprint?.promotedSelectedSelector || targetFingerprint?.selectedSelector || payload.element?.selector,
+    boundingBox: clipRect,
+    elementHint: {
+      tagName: payload.element?.tag,
+      id: payload.element?.id,
+      classList: payload.element?.classes,
+      textPreview: payload.element?.text,
+      kind: payload.element?.kind,
+    },
+    targetClassHint,
+    targetSubtypeHint,
+    targetClassReasons: targetFingerprint?.targetClassReasons || payload.element?.targetClassReasons,
+    targetFingerprint,
+    actionTraceEvents,
+    mutationTraceEvents,
+  }
+}
 
 const saveSnapFiles = async (payload: StoredPayload) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)

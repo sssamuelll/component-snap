@@ -6,10 +6,11 @@ import type {
   ReplayTimelineEventV0,
   ResourceGraphV0,
 } from './types'
+import type { TargetClass } from './nodeMappingTypes'
 
 export interface FidelityPortableDiagnosticsInput {
   source?: 'replay-capsule' | 'portable-fallback'
-  targetClass?: 'semantic-ui' | 'render-scene'
+  targetClass?: TargetClass | 'semantic-ui'
   targetClassHint?: string
   targetSubtypeHint?: string
   classReasons?: string[]

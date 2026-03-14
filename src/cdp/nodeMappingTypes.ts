@@ -30,8 +30,12 @@ export type TargetSubtype =
 export interface TargetFingerprint {
   stableSelector?: string
   selectedSelector?: string
+  originalStableSelector?: string
+  originalSelectedSelector?: string
   promotedStableSelector?: string
   promotedSelectedSelector?: string
+  promotionReason?: string
+  promotionPath?: string[]
   tagName: string
   id?: string
   classList: string[]

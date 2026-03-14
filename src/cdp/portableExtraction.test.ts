@@ -157,6 +157,21 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.warnings).toContain('replay-capsule-css-graph-missing')
   })
 
+  it('preserves specific semantic class hints instead of collapsing them to semantic-ui', () => {
+    const capture = baseCapture()
+    capture.seed.targetClassHint = 'noisy-container'
+    capture.seed.targetSubtypeHint = 'generic'
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.diagnostics.targetClass).toBe('noisy-container')
+    expect(result.diagnostics.exportMode).toBe('semantic-ui-portable')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-class-hint:noisy-container')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-class:noisy-container')
+  })
+
   it('fails explicitly when capsule portable extraction collapses to an empty selector shell', () => {
     const capture = baseCapture()
     if (capture.replayCapsule) {
@@ -374,6 +389,72 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.diagnostics.warnings).toContain('replay-capsule-target-subtree-preferred-for-frame-integrity')
     expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:frame-chain-selector-hint-recovered')
     expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:scene-frame-hints-recovered')
+  })
+
+  it('prefers compact chart-like candidates over framed target wrappers when the chart selector is preserved', () => {
+    const capture = baseCapture()
+    capture.seed.selectedSelector = 'section.card'
+    capture.seed.stableSelector = 'section.card'
+    capture.seed.targetClassHint = 'render-scene'
+    capture.seed.targetSubtypeHint = 'chart-like'
+    capture.seed.targetFingerprint = {
+      tagName: 'svg',
+      classList: ['chart-scene'],
+      attributeHints: [],
+      ancestry: [],
+      boundingBox: { x: 1, y: 2, width: 700, height: 320 },
+      selectedSelector: '#analytics-chart',
+      stableSelector: '#analytics-chart',
+      promotedSelectedSelector: 'section.card',
+      promotedStableSelector: 'section.card',
+    }
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.targetSubtree = {
+        source: 'runtime-object',
+        html: '<section class="card"><svg id="analytics-chart" class="chart-scene" viewBox="0 0 700 320"><rect width="700" height="320"></rect><path d="M0 0"></path></svg></section>',
+        nodeCount: 4,
+        elementCount: 4,
+        textNodeCount: 0,
+        textLength: 0,
+        maxDepth: 2,
+      }
+      capture.replayCapsule.snapshot.candidateSubtree = {
+        source: 'reconstructed-subtree',
+        html: '<svg id="analytics-chart" class="chart-scene" viewBox="0 0 700 320"><rect width="700" height="320"></rect><path d="M0 0"></path></svg>',
+        removedTagCounts: {},
+        removedAttributeCounts: {},
+        collapsedWrapperCount: 1,
+        compactedSvgCount: 0,
+        nodeCount: 3,
+        textLength: 0,
+        quality: {
+          anchorNodeCount: 1,
+          wrapperNodeCount: 1,
+          textNodeCount: 0,
+          anchorDensity: 0.33,
+          wrapperDensity: 0.33,
+          wrapperToAnchorRatio: 1,
+          profile: 'scene-like',
+        },
+        reconstruction: {
+          mode: 'semantic',
+          preservedEmptyScenePrimitiveCount: 0,
+          preservedCustomElementCount: 0,
+          preservedLayeredElementCount: 1,
+        },
+        warnings: ['target-candidate-collapsed-wrappers:1', 'target-candidate-profile:scene-like'],
+      }
+    }
+
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(result.artifacts.html).toContain('<svg id="analytics-chart" class="chart-scene"')
+    expect(result.artifacts.html).not.toContain('<section class="card"')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-target-class:render-scene')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:class-policy:chart-like-prefers-compact-candidate')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:chart-scene-root-retained:2')
   })
 
   it('surfaces scene-preserving candidate exports for board-like captures', () => {

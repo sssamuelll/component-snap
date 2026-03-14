@@ -111,8 +111,17 @@ const SCENE_FRAME_CLASS_TOKENS = ['puzzle__board', 'main-board', 'cg-wrap', 'boa
 const SEARCH_SHELL_CLASS_TOKENS = ['rnnxgb', 'a8sbwf', 'searchbox', 'search', 'input-wrapper']
 const SEARCH_PREFERRED_CLASS_TOKENS = ['rnnxgb', 'a8sbwf']
 
+const getPromotionDescriptor = (el: HTMLElement) => {
+  const tag = el.tagName.toLowerCase()
+  const id = el.id ? `#${el.id}` : ''
+  const cls = el.classList.length ? `.${Array.from(el.classList).slice(0, 3).join('.')}` : ''
+  return `${tag}${id}${cls}`
+}
+
 const findVisualRoot = (target: HTMLElement) => {
   let best = target; const vArea = Math.max(1, window.innerWidth * window.innerHeight)
+  const promotionPath = [getPromotionDescriptor(target)]
+  let promotionReason: string | undefined
   const hasSceneMarkers = (el: HTMLElement) => {
     const tag = el.tagName.toLowerCase()
     const cls = (el.className?.toString() || '').toLowerCase()
@@ -195,22 +204,38 @@ const findVisualRoot = (target: HTMLElement) => {
   let curr = target
   let bestSceneFrame: HTMLElement | null = null
   let bestSearchShell: HTMLElement | null = null
+  let bestScenePromotionPath = [...promotionPath]
+  let bestSearchPromotionPath = [...promotionPath]
   let bestSearchShellScore = -Infinity
   for (let depth = 0; depth < 15 && curr && curr !== document.body; depth++) {
+    if (depth > 0) promotionPath.push(getPromotionDescriptor(curr))
     if (getScore(curr) > 30) best = curr
-    if (isSceneTarget && isSceneFrameCandidate(curr)) bestSceneFrame = curr
+    if (isSceneTarget && isSceneFrameCandidate(curr)) {
+      bestSceneFrame = curr
+      bestScenePromotionPath = [...promotionPath]
+    }
     if (isSearchTarget) {
       const searchScore = getSearchShellScore(curr)
       if (searchScore > bestSearchShellScore) {
         bestSearchShellScore = searchScore
-        bestSearchShell = searchScore > 0 ? curr : bestSearchShell
+        if (searchScore > 0) {
+          bestSearchShell = curr
+          bestSearchPromotionPath = [...promotionPath]
+        }
       }
     }
     curr = curr.parentElement as HTMLElement
   }
-  if (isSceneTarget && bestSceneFrame) return bestSceneFrame
-  if (isSearchTarget && bestSearchShell) return bestSearchShell
-  return best
+  if (isSceneTarget && bestSceneFrame) {
+    promotionReason = bestSceneFrame !== target ? 'promotion:scene-frame-preserving-root' : undefined
+    return { root: bestSceneFrame, promotionReason, promotionPath: bestScenePromotionPath }
+  }
+  if (isSearchTarget && bestSearchShell) {
+    promotionReason = bestSearchShell !== target ? 'promotion:search-shell-root' : undefined
+    return { root: bestSearchShell, promotionReason, promotionPath: bestSearchPromotionPath }
+  }
+  promotionReason = best !== target ? 'promotion:visual-bounded-root' : undefined
+  return { root: best, promotionReason, promotionPath }
 }
 
 const toCompactText = (value: string) => value.replace(/\s+/g, ' ').trim()
@@ -371,7 +396,11 @@ const classifyTarget = (target: HTMLElement, captureRoot?: HTMLElement): TargetC
   return { targetClass: 'semantic-shell', targetSubtype: 'generic', reasons }
 }
 
-const buildTargetFingerprint = (target: HTMLElement, captureRoot?: HTMLElement) => {
+const buildTargetFingerprint = (
+  target: HTMLElement,
+  captureRoot?: HTMLElement,
+  promotionMeta?: { promotionReason?: string; promotionPath?: string[] },
+) => {
   const promotedRoot = captureRoot && captureRoot !== target ? captureRoot : undefined
   const fingerprintRoot = promotedRoot || target
   const rect = fingerprintRoot.getBoundingClientRect()
@@ -379,8 +408,12 @@ const buildTargetFingerprint = (target: HTMLElement, captureRoot?: HTMLElement) 
   return {
     stableSelector: buildStableSelector(fingerprintRoot),
     selectedSelector: buildStableSelector(fingerprintRoot),
+    originalStableSelector: buildStableSelector(target),
+    originalSelectedSelector: buildStableSelector(target),
     promotedStableSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
     promotedSelectedSelector: promotedRoot ? buildStableSelector(promotedRoot) : undefined,
+    promotionReason: promotionMeta?.promotionReason,
+    promotionPath: promotionMeta?.promotionPath,
     tagName: fingerprintRoot.tagName.toLowerCase(),
     id: fingerprintRoot.id || undefined,
     classList: Array.from(fingerprintRoot.classList),
@@ -631,8 +664,9 @@ const onBlockerClick = async (event: MouseEvent) => {
   recordActionFromElement('click', target, {
     text: toActionTextPreview(target.textContent || ''),
   })
-  const captureRoot = findVisualRoot(target)
-  const targetFingerprint = buildTargetFingerprint(target, captureRoot)
+  const visualRoot = findVisualRoot(target)
+  const captureRoot = visualRoot.root
+  const targetFingerprint = buildTargetFingerprint(target, captureRoot, visualRoot)
   const rect = captureRoot.getBoundingClientRect(), selector = buildStableSelector(captureRoot)
   const portable = await extractPortableFallbackSubtree(captureRoot, target)
   const snap: ElementSnap = {

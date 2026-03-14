@@ -3,8 +3,13 @@ import type { TargetClass, TargetSubtype } from './nodeMappingTypes'
 import type { CaptureBundleV0, MatchedRuleV0, ReplayCapsuleV0, ResourceGraphV0, ShadowTopologyV0, StyleDeclarationV0 } from './types'
 
 type PortableExportSource = 'replay-capsule' | 'portable-fallback'
-type PortableTargetClass = 'semantic-ui' | 'render-scene'
+type PortableTargetClass = TargetClass | 'semantic-ui'
 type PortableExportMode = 'semantic-ui-portable' | 'render-scene-freeze'
+
+type PortableTargetClassResolution = {
+  targetClass: PortableTargetClass
+  coercionWarning?: string
+}
 
 export interface PortableExportDiagnostics {
   source: PortableExportSource
@@ -158,6 +163,22 @@ const buildSkeletonFromSelector = (selector: string) => {
 }
 
 const pickSelector = (capture: CaptureBundleV0, replayCapsule: ReplayCapsuleV0, fallbackSelector?: string) => {
+  const isChartLikeScene = capture.seed.targetClassHint === 'render-scene' && capture.seed.targetSubtypeHint === 'chart-like'
+
+  if (isChartLikeScene) {
+    return (
+      capture.seed.targetFingerprint?.selectedSelector ||
+      capture.seed.targetFingerprint?.stableSelector ||
+      capture.seed.selectedSelector ||
+      capture.seed.stableSelector ||
+      capture.seed.targetFingerprint?.promotedSelectedSelector ||
+      capture.seed.targetFingerprint?.promotedStableSelector ||
+      replayCapsule.snapshot.cssGraph?.target?.selector ||
+      fallbackSelector ||
+      ''
+    )
+  }
+
   return (
     capture.seed.targetFingerprint?.promotedSelectedSelector ||
     capture.seed.targetFingerprint?.promotedStableSelector ||
@@ -182,18 +203,18 @@ const getPortableTargetClass = (
   candidateSubtree: CaptureBundleV0['candidateSubtree'],
   targetSubtree: CaptureBundleV0['targetSubtree'],
   targetClassHint?: TargetClass,
-): PortableTargetClass => {
-  if (targetClassHint === 'render-scene') return 'render-scene'
+): PortableTargetClassResolution => {
+  if (targetClassHint === 'render-scene') return { targetClass: 'render-scene' }
   if (['semantic-leaf', 'semantic-shell', 'interactive-composite', 'noisy-container'].includes(targetClassHint || '')) {
-    return 'semantic-ui'
+    return { targetClass: targetClassHint as TargetClass }
   }
-  if (candidateSubtree?.quality?.profile === 'scene-like') return 'render-scene'
-  if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') return 'render-scene'
+  if (candidateSubtree?.quality?.profile === 'scene-like') return { targetClass: 'render-scene' }
+  if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') return { targetClass: 'render-scene' }
   if (asArray(candidateSubtree?.warnings).some((warning) => warning.includes('scene-like') || warning.includes('scene-preserving'))) {
-    return 'render-scene'
+    return { targetClass: 'render-scene' }
   }
-  if (asArray(targetSubtree?.warnings).some((warning) => warning.includes('scene'))) return 'render-scene'
-  return 'semantic-ui'
+  if (asArray(targetSubtree?.warnings).some((warning) => warning.includes('scene'))) return { targetClass: 'render-scene' }
+  return { targetClass: 'semantic-ui' }
 }
 
 const getPortableExportMode = (targetClass: PortableTargetClass): PortableExportMode => {
@@ -224,6 +245,16 @@ const htmlContainsSelectorFrameHints = (html: string, selector: string) => {
 }
 
 const hasSceneFrameHints = (html: string) => /(cg-wrap|cg-container|main-board|analyse__board|board-shell|scene-layer)/i.test(html)
+
+const hasChartSceneRoot = (html: string, selector: string) => {
+  const { id, classes } = selectorTokens(selector)
+  if (!/<(svg|canvas)\b/i.test(html)) return false
+  if (id && new RegExp(`<(?:svg|canvas)\\b[^>]*id=["'][^"']*${id}[^"']*["']`, 'i').test(html)) return true
+  if (classes.some((className) => new RegExp(`<(?:svg|canvas)\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["']`, 'i').test(html))) return true
+  return /<(svg|canvas)\b/i.test(html)
+}
+
+const countChartPrimitives = (html: string) => (html.match(/<(path|rect|line|polyline|polygon|circle|ellipse|g|defs|stop)\b/gi) || []).length
 
 const countElementTags = (html: string) => (html.match(/<([a-zA-Z][^\s/>]*)\b[^>]*>/g) || []).length
 
@@ -319,6 +350,27 @@ const pickExportSubtreeHtml = (input: {
     const targetHasSelectorFrame = htmlContainsSelectorFrameHints(targetHtml, input.selectedSelector)
     const candidateHasSceneFrame = hasSceneFrameHints(candidateHtml)
     const targetHasSceneFrame = hasSceneFrameHints(targetHtml)
+
+    if (input.targetSubtypeHint === 'chart-like') {
+      const candidateHasChartRoot = hasChartSceneRoot(candidateHtml, input.selectedSelector)
+      const targetHasChartRoot = hasChartSceneRoot(targetHtml, input.selectedSelector)
+      const candidatePrimitiveCount = countChartPrimitives(candidateHtml)
+      const targetPrimitiveCount = countChartPrimitives(targetHtml)
+      const candidateRetainsSceneRoot = candidateHasChartRoot && candidatePrimitiveCount >= Math.min(3, Math.max(1, targetPrimitiveCount))
+
+      if (candidateRetainsSceneRoot) {
+        return {
+          html: candidateHtml,
+          reasons: [
+            'class-policy:chart-like-prefers-compact-candidate',
+            `chart-scene-root-retained:${candidatePrimitiveCount}`,
+          ],
+        }
+      }
+      if (!candidateHasSelectorFrame && targetHasSelectorFrame) reasons.push('frame-chain-selector-hint-recovered')
+      if (!candidateHasChartRoot && targetHasChartRoot) reasons.push('chart-scene-root-recovered')
+      return reasons.length > 0 ? { html: targetHtml, reasons } : { html: candidateHtml, reasons }
+    }
 
     if (!candidateHasSelectorFrame && targetHasSelectorFrame) reasons.push('frame-chain-selector-hint-recovered')
     if (!candidateHasSceneFrame && targetHasSceneFrame) reasons.push('scene-frame-hints-recovered')
@@ -477,7 +529,7 @@ export const extractPortableFromReplayCapsule = (
   const targetClassHint = capture.seed.targetClassHint || capture.seed.targetFingerprint?.targetClassHint
   const targetSubtypeHint = capture.seed.targetSubtypeHint || capture.seed.targetFingerprint?.targetSubtypeHint
   const targetClassReasons = capture.seed.targetClassReasons || capture.seed.targetFingerprint?.targetClassReasons
-  const targetClass = getPortableTargetClass(candidateSubtree, targetSubtree, targetClassHint)
+  const { targetClass } = getPortableTargetClass(candidateSubtree, targetSubtree, targetClassHint)
   const exportMode = getPortableExportMode(targetClass)
 
   const exportSubtreeChoice = pickExportSubtreeHtml({
@@ -507,6 +559,8 @@ export const extractPortableFromReplayCapsule = (
   if (subtreeHtml === (targetSubtree?.html?.trim() || '') && candidateSubtree?.html?.trim()) {
     if (targetClass === 'render-scene') warnings.push('replay-capsule-target-subtree-preferred-for-frame-integrity')
     else warnings.push('replay-capsule-target-subtree-preferred-for-wrapper-integrity')
+  }
+  if (exportSubtreeChoice.reasons.length > 0) {
     warnings.push(...exportSubtreeChoice.reasons.map((reason) => `replay-capsule-preservation-reason:${reason}`))
   }
   if (candidateSubtree?.reconstruction?.mode === 'scene-preserving') {

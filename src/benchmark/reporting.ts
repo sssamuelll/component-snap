@@ -30,6 +30,10 @@ export interface BenchmarkScenarioResult {
   status: BenchmarkScenarioStatus
   url: string
   selector?: string
+  originalSelector?: string
+  promotedSelector?: string
+  promotionReason?: string
+  promotionPath?: string[]
   exportTier?: string
   expectedTargetClass?: string
   expectedTargetSubtype?: string
@@ -86,6 +90,10 @@ export const buildScenarioReport = (input: {
     `Status: ${result.status}`,
     `URL: ${result.url}`,
     `Selector: ${result.selector || 'n/a'}`,
+    `Original selector: ${result.originalSelector || 'n/a'}`,
+    `Promoted selector: ${result.promotedSelector || 'n/a'}`,
+    `Promotion reason: ${result.promotionReason || 'n/a'}`,
+    `Promotion path: ${result.promotionPath?.join(' -> ') || 'n/a'}`,
     `Export tier: ${result.exportTier || 'n/a'}`,
     `Expected target class: ${result.expectedTargetClass || 'n/a'}`,
     `Expected target subtype: ${result.expectedTargetSubtype || 'n/a'}`,
@@ -149,6 +157,9 @@ export const buildSuiteReport = (suite: BenchmarkSuiteResult) => {
     const summary = [
       `${scenario.scenarioId}: ${scenario.status}`,
       `selector=${scenario.selector || 'n/a'}`,
+      `original=${scenario.originalSelector || 'n/a'}`,
+      `promoted=${scenario.promotedSelector || 'n/a'}`,
+      `promotion=${scenario.promotionReason || 'n/a'}`,
       `tier=${scenario.exportTier || 'n/a'}`,
       `expectedClass=${scenario.expectedTargetClass || 'n/a'}`,
       `expectedSubtype=${scenario.expectedTargetSubtype || 'n/a'}`,

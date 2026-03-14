@@ -8,6 +8,7 @@ import { buildReplayViewerState } from '../src/cdp/replayViewerState.ts'
 import { scoreCaptureFidelity } from '../src/cdp/fidelityScoring.ts'
 import { comparePixelDiff } from '../src/cdp/pixelDiff.ts'
 import type { CaptureBundleV0 } from '../src/cdp/types.ts'
+import type { TargetFingerprint } from '../src/cdp/nodeMappingTypes.ts'
 import {
   buildPortablePreviewDocument,
   buildReplayViewerArtifact,
@@ -54,6 +55,7 @@ type StoredSelection = {
     js?: string
     screenshotDataUrl?: string
     portableFallback?: PortableFallbackExtractionDiagnostics
+    targetFingerprint?: TargetFingerprint
   }
 }
 
@@ -719,6 +721,18 @@ const runScenario = async (
           : 'skipped',
       url: scenario.url,
       selector: target.selector,
+      originalSelector:
+        selection.element?.targetFingerprint?.originalStableSelector ||
+        selection.element?.targetFingerprint?.originalSelectedSelector ||
+        undefined,
+      promotedSelector:
+        selection.element?.targetFingerprint?.promotedStableSelector ||
+        selection.element?.targetFingerprint?.promotedSelectedSelector ||
+        selection.element?.targetFingerprint?.stableSelector ||
+        selection.element?.targetFingerprint?.selectedSelector ||
+        undefined,
+      promotionReason: selection.element?.targetFingerprint?.promotionReason,
+      promotionPath: selection.element?.targetFingerprint?.promotionPath,
       exportTier: selection.exportTier,
       expectedTargetClass: scenario.expectedTargetClass,
       expectedTargetSubtype: scenario.expectedTargetSubtype,

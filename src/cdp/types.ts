@@ -230,7 +230,7 @@ export interface PixelDiffMetricsV0 {
 export interface FidelityScoringV0 {
   version: '0'
   computedAt: string
-  targetClass?: 'semantic-ui' | 'render-scene'
+  targetClass?: TargetClass | 'semantic-ui'
   exportMode?: 'semantic-ui-portable' | 'render-scene-freeze'
   overall: {
     score: number
