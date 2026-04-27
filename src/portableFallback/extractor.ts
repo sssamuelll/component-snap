@@ -170,35 +170,80 @@ const getAllStyleSheetsRecursive = (root: Document | ShadowRoot = document): CSS
 const normalizeSelectorForMatch = (selectorText: string) =>
   selectorText.replace(/:hover/g, '').replace(/:focus-visible/g, '').replace(/:focus-within/g, '').replace(/:focus/g, '').replace(/:active/g, '').trim()
 
-const collectPseudoDeclarations = (el: HTMLElement | SVGElement, pseudo: ':hover' | ':focus' | ':active') => {
+export const PSEUDO_STATES = [':hover', ':focus', ':active'] as const
+export type PseudoState = (typeof PSEUDO_STATES)[number]
+
+export interface PseudoRuleIndexEntry {
+  selector: string
+  declarations: Map<string, string>
+}
+
+export type PseudoRuleIndex = Record<PseudoState, PseudoRuleIndexEntry[]>
+
+export interface SheetIndices {
+  pseudo: PseudoRuleIndex
+  keyframes: Map<string, string[]>
+}
+
+const extractDeclarations = (style: CSSStyleDeclaration): Map<string, string> => {
   const declarations = new Map<string, string>()
-  const allSheets = getAllStyleSheetsRecursive()
-  for (const sheet of allSheets) {
+  for (let i = 0; i < style.length; i += 1) {
+    const prop = style[i]
+    const val = style.getPropertyValue(prop).trim()
+    if (val) declarations.set(prop, val)
+  }
+  return declarations
+}
+
+export const buildSheetIndices = (sheets: readonly CSSStyleSheet[]): SheetIndices => {
+  const pseudo: PseudoRuleIndex = { ':hover': [], ':focus': [], ':active': [] }
+  const keyframes = new Map<string, string[]>()
+
+  for (const sheet of sheets) {
     try {
-      const rules = sheet.cssRules
-      for (const rule of Array.from(rules)) {
-        if (!(rule instanceof CSSStyleRule) || !rule.selectorText.includes(pseudo)) continue
-        for (const sel of rule.selectorText.split(',').map((s) => s.trim())) {
-          if (!sel.includes(pseudo)) continue
-          const norm = normalizeSelectorForMatch(sel)
-          if (norm) {
-            try {
-              if (el.matches(norm)) {
-                for (let i = 0; i < rule.style.length; i++) {
-                  const p = rule.style[i]
-                  const val = rule.style.getPropertyValue(p).trim()
-                  if (val) declarations.set(p, val)
-                }
-              }
-            } catch {
-              continue
-            }
+      for (const rule of Array.from(sheet.cssRules)) {
+        if (rule instanceof CSSKeyframesRule) {
+          const existing = keyframes.get(rule.name)
+          if (existing) existing.push(rule.cssText)
+          else keyframes.set(rule.name, [rule.cssText])
+          continue
+        }
+        if (!(rule instanceof CSSStyleRule)) continue
+        const selectorText = rule.selectorText
+        let extracted: Map<string, string> | undefined
+        for (const state of PSEUDO_STATES) {
+          if (!selectorText.includes(state)) continue
+          for (const sel of selectorText.split(',').map((segment) => segment.trim())) {
+            if (!sel.includes(state)) continue
+            const norm = normalizeSelectorForMatch(sel)
+            if (!norm) continue
+            if (!extracted) extracted = extractDeclarations(rule.style)
+            pseudo[state].push({ selector: norm, declarations: extracted })
           }
         }
       }
     } catch {
       continue
     }
+  }
+
+  return { pseudo, keyframes }
+}
+
+export const pickPseudoDeclarations = (
+  el: Element,
+  entries: readonly PseudoRuleIndexEntry[],
+): Map<string, string> => {
+  const declarations = new Map<string, string>()
+  for (const entry of entries) {
+    let matched = false
+    try {
+      matched = el.matches(entry.selector)
+    } catch {
+      continue
+    }
+    if (!matched) continue
+    for (const [prop, val] of entry.declarations) declarations.set(prop, val)
   }
   return declarations
 }
@@ -464,6 +509,8 @@ export const extractPortableFallbackSubtree = async (
     css += '}\n\n'
   }
 
+  const sheetIndices = buildSheetIndices(getAllStyleSheetsRecursive())
+
   for (let index = 0; index < clonedNodes.length; index++) {
     const node = clonedNodes[index]
     const original = originalNodes[index]
@@ -501,8 +548,8 @@ export const extractPortableFallbackSubtree = async (
     block += '}\n'
     if (hasProps) css += `${block}\n`
 
-    for (const state of [':hover', ':focus', ':active'] as const) {
-      const declarations = collectPseudoDeclarations(original, state)
+    for (const state of PSEUDO_STATES) {
+      const declarations = pickPseudoDeclarations(original, sheetIndices.pseudo[state])
       if (declarations.size) {
         stats.pseudoStateRuleCount += 1
         let stateBlock = `${selector}${state} {\n`
@@ -531,18 +578,11 @@ export const extractPortableFallbackSubtree = async (
     const animationName = computed.animationName
     if (animationName && animationName !== 'none') {
       for (const name of animationName.split(',').map((value) => value.trim())) {
-        const allSheets = getAllStyleSheetsRecursive()
-        for (const sheet of allSheets) {
-          try {
-            for (const rule of Array.from(sheet.cssRules)) {
-              if (rule instanceof CSSKeyframesRule && rule.name === name) {
-                stats.keyframeRuleCount += 1
-                css += `${rule.cssText}\n\n`
-              }
-            }
-          } catch {
-            continue
-          }
+        const cssTexts = sheetIndices.keyframes.get(name)
+        if (!cssTexts) continue
+        for (const text of cssTexts) {
+          stats.keyframeRuleCount += 1
+          css += `${text}\n\n`
         }
       }
     }
