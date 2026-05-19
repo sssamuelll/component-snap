@@ -1,12 +1,9 @@
 name: Create code review issues
 
 on:
-  workflow_dispatch:
-    inputs:
-      start:
-        description: "Empezar desde el issue N (1-20). Útil para reanudar si falló a mitad."
-        required: false
-        default: "1"
+  push:
+    branches:
+      - claude/code-review-architecture-6LwBL
 
 permissions:
   issues: write
@@ -14,6 +11,9 @@ permissions:
 
 jobs:
   create-issues:
+    # Guarda: solo corre si el commit que disparó el push contiene la marca.
+    # Así futuros pushes a la rama no re-crean issues.
+    if: contains(github.event.head_commit.message, '[create-issues]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,4 +26,4 @@ jobs:
       - name: Create the 20 review issues
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 create_issues.py --start "${{ inputs.start }}"
+        run: python3 create_issues.py
