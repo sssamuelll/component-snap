@@ -1,0 +1,29 @@
+name: Create code review issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Empezar desde el issue N (1-20). Útil para reanudar si falló a mitad."
+        required: false
+        default: "1"
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Create the 20 review issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 create_issues.py --start "${{ inputs.start }}"
