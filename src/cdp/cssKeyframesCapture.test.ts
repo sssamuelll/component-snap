@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   captureKeyframeRules,
+  captureKeyframesFromRuntime,
   parseKeyframeRulesFromStylesheet,
   resolveKeyframes,
   type ParsedKeyframeRule,
@@ -43,6 +44,20 @@ describe('parseKeyframeRulesFromStylesheet', () => {
     expect(rules[0]?.isVendorPrefixed).toBe(true)
     expect(rules[0]?.cssText.startsWith('@keyframes pulse {')).toBe(true)
     expect(rules[0]?.cssText.includes('@-webkit-keyframes')).toBe(false)
+  })
+
+  it.each([
+    ['@-moz-keyframes', '-moz-'],
+    ['@-o-keyframes', '-o-'],
+    ['@-ms-keyframes', '-ms-'],
+  ])('normalizes %s to a plain @keyframes block (prefix %s)', (header) => {
+    const text = `${header} slide { from { left: 0 } to { left: 100% } }`
+    const rules = parseKeyframeRulesFromStylesheet(text)
+    expect(rules).toHaveLength(1)
+    expect(rules[0]?.name).toBe('slide')
+    expect(rules[0]?.isVendorPrefixed).toBe(true)
+    expect(rules[0]?.cssText.startsWith('@keyframes slide {')).toBe(true)
+    expect(rules[0]?.cssText.includes('@-')).toBe(false)
   })
 
   it('does not crash on stray { inside comments or string values', () => {
@@ -144,6 +159,107 @@ describe('captureKeyframeRules', () => {
     )
     expect(rules.map((rule) => rule.name)).toEqual(['spin'])
     expect(warnings).toContain('keyframes-stylesheet-text-unavailable:sheet-bad')
+  })
+})
+
+type RuntimeEvaluateValueResponse = { result?: { value?: Array<{ name: string; cssText: string }> } }
+
+const makeRuntimeClient = (
+  result: { value?: Array<{ name: string; cssText: string }> } | Error,
+): CDPClient => {
+  return {
+    send: async (method: string) => {
+      if (method !== 'Runtime.evaluate') throw new Error(`unexpected method: ${method}`)
+      if (result instanceof Error) throw result
+      return { result } as RuntimeEvaluateValueResponse
+    },
+  } as unknown as CDPClient
+}
+
+describe('captureKeyframesFromRuntime', () => {
+  it('returns parsed keyframes from the runtime enumeration payload', async () => {
+    const client = makeRuntimeClient({
+      value: [
+        { name: 'spin', cssText: '@keyframes spin { from { x: 0 } to { x: 1 } }' },
+        { name: 'fade', cssText: '@keyframes fade { 0% { opacity: 0 } }' },
+      ],
+    })
+    const warnings: string[] = []
+    const rules = await captureKeyframesFromRuntime(client, warnings)
+    expect(rules.map((r) => r.name)).toEqual(['spin', 'fade'])
+    expect(rules.every((r) => !r.isVendorPrefixed)).toBe(true)
+    expect(warnings).toEqual([])
+  })
+
+  it('normalizes vendor-prefixed cssText returned by the browser and flags isVendorPrefixed', async () => {
+    const client = makeRuntimeClient({
+      value: [
+        { name: 'pulse', cssText: '@-webkit-keyframes pulse { 0% { opacity: 0 } 100% { opacity: 1 } }' },
+        { name: 'slide', cssText: '@-moz-keyframes slide { from { x: 0 } }' },
+      ],
+    })
+    const warnings: string[] = []
+    const rules = await captureKeyframesFromRuntime(client, warnings)
+    expect(rules).toHaveLength(2)
+    expect(rules[0]?.cssText.startsWith('@keyframes pulse {')).toBe(true)
+    expect(rules[0]?.isVendorPrefixed).toBe(true)
+    expect(rules[1]?.cssText.startsWith('@keyframes slide {')).toBe(true)
+    expect(rules[1]?.isVendorPrefixed).toBe(true)
+  })
+
+  it('emits a warning and returns [] when Runtime.evaluate fails', async () => {
+    const client = makeRuntimeClient(new Error('runtime unavailable'))
+    const warnings: string[] = []
+    const rules = await captureKeyframesFromRuntime(client, warnings)
+    expect(rules).toEqual([])
+    expect(warnings).toContain('keyframes-runtime-enumeration-failed')
+  })
+
+  it('skips entries with empty name or empty cssText without throwing', async () => {
+    const client = makeRuntimeClient({
+      value: [
+        { name: '', cssText: '@keyframes foo {}' },
+        { name: 'bar', cssText: '' },
+        { name: 'good', cssText: '@keyframes good { from { x: 0 } }' },
+      ],
+    })
+    const warnings: string[] = []
+    const rules = await captureKeyframesFromRuntime(client, warnings)
+    expect(rules.map((r) => r.name)).toEqual(['good'])
+  })
+
+  it('returns [] when the response has no value array', async () => {
+    const client = makeRuntimeClient({})
+    const warnings: string[] = []
+    const rules = await captureKeyframesFromRuntime(client, warnings)
+    expect(rules).toEqual([])
+    expect(warnings).toEqual([])
+  })
+})
+
+describe('resolveKeyframes with mixed CDP + Runtime sources', () => {
+  it('runtime entry wins over a prefixed CDP entry with the same name', () => {
+    const parsed: ParsedKeyframeRule[] = [
+      // From CDP CSS.getStyleSheetText — preserved vendor prefix in source
+      { name: 'spin', cssText: '@keyframes spin { from { x: 0 } to { x: 1 } }', isVendorPrefixed: true },
+      // From Runtime.evaluate — browser normalized cssText
+      { name: 'spin', cssText: '@keyframes spin { from { x: 99 } to { x: 100 } }', isVendorPrefixed: false },
+    ]
+    const warnings: string[] = []
+    const resolved = resolveKeyframes(['spin'], parsed, warnings)
+    expect(resolved[0]?.cssText.includes('x: 99')).toBe(true)
+  })
+
+  it('falls back to CDP entry when runtime did not find that name (cross-origin sheet)', () => {
+    const parsed: ParsedKeyframeRule[] = [
+      // CDP found it because the matched sheet had a styleSheetId
+      { name: 'cross', cssText: '@keyframes cross { from { y: 0 } }', isVendorPrefixed: false },
+      // Runtime did not return 'cross' (cross-origin sheet threw on cssRules)
+    ]
+    const warnings: string[] = []
+    const resolved = resolveKeyframes(['cross'], parsed, warnings)
+    expect(resolved).toEqual([{ name: 'cross', cssText: '@keyframes cross { from { y: 0 } }' }])
+    expect(warnings).not.toContain('keyframes-name-undefined:cross')
   })
 })
 

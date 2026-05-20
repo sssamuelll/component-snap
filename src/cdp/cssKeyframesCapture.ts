@@ -16,8 +16,10 @@ interface GetStyleSheetTextResponse {
 
 const stripQuotes = (input: string) => input.replace(/^["']|["']$/g, '')
 
+const VENDOR_PREFIX_PATTERN = /^@-(?:webkit|moz|o|ms)-keyframes/i
+
 const KEYFRAMES_HEADER_PATTERN =
-  /@(-webkit-)?keyframes\s+([A-Za-z_][\w-]*|"[^"]*"|'[^']*')\s*\{/g
+  /@(-webkit-|-moz-|-o-|-ms-)?keyframes\s+([A-Za-z_][\w-]*|"[^"]*"|'[^']*')\s*\{/g
 
 export const parseKeyframeRulesFromStylesheet = (text: string): ParsedKeyframeRule[] => {
   const rules: ParsedKeyframeRule[] = []
@@ -110,6 +112,87 @@ export const captureKeyframeRules = async (
   }
 
   return parsed
+}
+
+// Enumerates every CSSKeyframesRule reachable from the page: document.styleSheets,
+// every shadowRoot.styleSheets, and adoptedStyleSheets on document and shadowRoots.
+// Cross-origin stylesheets throw on `.cssRules` and are skipped silently — those
+// are still picked up by the CDP `CSS.getStyleSheetText` path when their
+// styleSheetId appears in matched rules.
+const ENUMERATE_KEYFRAMES_EXPRESSION = `(() => {
+  const out = []
+  const seenSheets = new WeakSet()
+  const seenRoots = new WeakSet()
+
+  const readSheet = (sheet) => {
+    if (!sheet || seenSheets.has(sheet)) return
+    seenSheets.add(sheet)
+    let rules
+    try {
+      rules = Array.from(sheet.cssRules || [])
+    } catch (_err) {
+      return
+    }
+    for (const rule of rules) {
+      const ctorName = rule && rule.constructor && rule.constructor.name
+      const isKeyframes = rule && (rule.type === 7 || ctorName === 'CSSKeyframesRule')
+      if (!isKeyframes) continue
+      const name = String(rule.name || '').trim()
+      const cssText = String(rule.cssText || '').trim()
+      if (name && cssText) out.push({ name, cssText })
+    }
+  }
+
+  const collectFromRoot = (root) => {
+    if (!root || seenRoots.has(root)) return
+    seenRoots.add(root)
+    const sheets = root.styleSheets ? Array.from(root.styleSheets) : []
+    for (const sheet of sheets) readSheet(sheet)
+    const adopted = Array.isArray(root.adoptedStyleSheets) ? root.adoptedStyleSheets : []
+    for (const sheet of adopted) readSheet(sheet)
+    const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : []
+    for (const el of all) if (el.shadowRoot) collectFromRoot(el.shadowRoot)
+  }
+
+  collectFromRoot(document)
+  return out
+})()`
+
+interface RuntimeEvaluateValueResponse<T> {
+  result?: { value?: T }
+}
+
+type RuntimeKeyframeEntry = { name?: unknown; cssText?: unknown }
+
+export const captureKeyframesFromRuntime = async (
+  client: CDPClient,
+  warnings: string[],
+): Promise<ParsedKeyframeRule[]> => {
+  let response: RuntimeEvaluateValueResponse<RuntimeKeyframeEntry[]>
+  try {
+    response = await client.send<RuntimeEvaluateValueResponse<RuntimeKeyframeEntry[]>>('Runtime.evaluate', {
+      expression: ENUMERATE_KEYFRAMES_EXPRESSION,
+      returnByValue: true,
+      awaitPromise: false,
+    })
+  } catch {
+    warnings.push('keyframes-runtime-enumeration-failed')
+    return []
+  }
+
+  const value = Array.isArray(response?.result?.value) ? response.result!.value! : []
+  const result: ParsedKeyframeRule[] = []
+  for (const entry of value) {
+    const name = String(entry?.name || '').trim()
+    const rawCssText = String(entry?.cssText || '').trim()
+    if (!name || !rawCssText) continue
+    const isVendorPrefixed = VENDOR_PREFIX_PATTERN.test(rawCssText)
+    const cssText = isVendorPrefixed
+      ? rawCssText.replace(VENDOR_PREFIX_PATTERN, '@keyframes')
+      : rawCssText
+    result.push({ name, cssText, isVendorPrefixed })
+  }
+  return result
 }
 
 export const resolveKeyframes = (
