@@ -10,7 +10,7 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[component-snap] extension installed')
 })
 
-type ClipRect = {
+export type ClipRect = {
   x: number
   y: number
   width: number
@@ -232,6 +232,37 @@ const isCaptureBundle = (value: unknown): value is CaptureBundleV0 => {
   return capture.backend === 'cdp' && capture.version === '0' && typeof capture.seed === 'object'
 }
 
+export type ScreenshotSource = 'cdp-clip' | 'tab-crop' | 'none'
+
+// Picks the screenshot source for `element.screenshotDataUrl`. CDP's clip is
+// the single source of truth: same shot benchmarks and the user see. The
+// chrome.tabs.captureVisibleTab + crop path stays only as a fallback for
+// when CDP didn't produce a clip (debugger not attached, SW recycled w/o
+// tabId, clip step failed but full passed, etc.).
+export const captureScreenshotDataUrl = async (
+  cdpCapture: unknown,
+  clipRect: ClipRect,
+  captureVisibleTab: () => Promise<string>,
+  cropDataUrl: (dataUrl: string, rect: ClipRect) => Promise<string | null>,
+): Promise<{ dataUrl: string | undefined; source: ScreenshotSource }> => {
+  const cdpClip = isCaptureBundle(cdpCapture) ? cdpCapture.screenshot?.clipDataUrl : undefined
+  if (cdpClip) {
+    return { dataUrl: cdpClip, source: 'cdp-clip' }
+  }
+  try {
+    const tabShot = await captureVisibleTab()
+    const cropped = await cropDataUrl(tabShot, clipRect)
+    if (cropped) {
+      return { dataUrl: cropped, source: 'tab-crop' }
+    }
+  } catch {
+    // Fall through to 'none'. captureVisibleTab fails silently on inactive
+    // tabs; cropDataUrl can return null on a 0-px clip. Either way, we
+    // surface the failure as source: 'none' rather than throwing.
+  }
+  return { dataUrl: undefined, source: 'none' }
+}
+
 const buildCaptureSeed = (
   requestId: string,
   tabId: number | undefined,
@@ -432,10 +463,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // entry would just bloat storage.session on the next reclaim.
         const tabId = await popActiveRequest(message.requestId)
 
-        const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
-        const cropped = await cropDataUrl(screenshot, message.clipRect)
-        if (cropped) message.payload.element.screenshotDataUrl = cropped
-
         let cdpCapture: unknown
         let cdpCaptureError: string | undefined
         if (tabId) {
@@ -459,6 +486,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           cdpCaptureError = 'sw-recycled-tab-id-missing'
           log('cdp_capture_failed', 'error', message.requestId, cdpCaptureError)
         }
+
+        const screenshotResult = await captureScreenshotDataUrl(
+          cdpCapture,
+          message.clipRect,
+          () => chrome.tabs.captureVisibleTab({ format: 'png' }),
+          cropDataUrl,
+        )
+        if (screenshotResult.dataUrl) {
+          message.payload.element.screenshotDataUrl = screenshotResult.dataUrl
+        }
+        log('screenshot_sourced', 'info', message.requestId, screenshotResult.source)
 
         const fallbackWarnings = message.payload?.element?.portableFallback?.warnings || []
         const fallbackConfidencePenalty = message.payload?.element?.portableFallback?.confidencePenalty
