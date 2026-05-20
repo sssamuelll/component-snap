@@ -218,11 +218,14 @@ const requestCapture = async (context: BrowserContext, requestId: string, pageUr
       status: tab.status,
     }
 
-    const registerResult = (() => {
+    const registerResult = await (async () => {
       const workerGlobal = globalThis as typeof globalThis & {
-        __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => { ok?: boolean; error?: string }
+        __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => Promise<{ ok?: boolean; error?: string }>
       }
-      return workerGlobal.__componentSnapRegisterActiveRequest?.(captureRequestId, tab.id) || {
+      if (!workerGlobal.__componentSnapRegisterActiveRequest) {
+        return { ok: false, error: 'Background register helper missing.' }
+      }
+      return (await workerGlobal.__componentSnapRegisterActiveRequest(captureRequestId, tab.id)) || {
         ok: false,
         error: 'Background register helper missing.',
       }

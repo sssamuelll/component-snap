@@ -89,16 +89,40 @@ type DebugEvent = {
   detail?: string
 }
 
-const activeRequests = new Map<string, number>()
 const debugLog: DebugEvent[] = []
 
+// `chrome.storage.session` persists across SW reclamation but lives in memory only.
+// Module-level state would be lost when MV3 evicts the service worker between
+// START_INSPECT_TAB and ELEMENT_SELECTED (see issue #30).
+// Note: get→mutate→set is not atomic; concurrent registrations could clobber
+// each other. Safe today because the picker flow is single-user, single-tab.
+export const registerActiveRequest = async (requestId: string, tabId: number): Promise<void> => {
+  const { activeRequests = {} } = (await chrome.storage.session.get(['activeRequests'])) as {
+    activeRequests?: Record<string, number>
+  }
+  activeRequests[requestId] = tabId
+  await chrome.storage.session.set({ activeRequests })
+}
+
+export const popActiveRequest = async (requestId: string): Promise<number | undefined> => {
+  const { activeRequests = {} } = (await chrome.storage.session.get(['activeRequests'])) as {
+    activeRequests?: Record<string, number>
+  }
+  const tabId = activeRequests[requestId]
+  if (tabId !== undefined) {
+    delete activeRequests[requestId]
+    await chrome.storage.session.set({ activeRequests })
+  }
+  return tabId
+}
+
 const backgroundGlobal = globalThis as typeof globalThis & {
-  __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => { ok: boolean }
+  __componentSnapRegisterActiveRequest?: (requestId: string, tabId: number) => Promise<{ ok: boolean }>
   __componentSnapGetDebugLogs?: () => DebugEvent[]
 }
 
-backgroundGlobal.__componentSnapRegisterActiveRequest = (requestId: string, tabId: number) => {
-  activeRequests.set(requestId, tabId)
+backgroundGlobal.__componentSnapRegisterActiveRequest = async (requestId: string, tabId: number) => {
+  await registerActiveRequest(requestId, tabId)
   log('register_active_request', 'info', requestId, `tabId: ${tabId}`)
   return { ok: true }
 }
@@ -348,25 +372,29 @@ const saveSnapFiles = async (payload: StoredPayload) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'REGISTER_ACTIVE_REQUEST') {
-    activeRequests.set(message.requestId, message.tabId)
-    log('register_active_request', 'info', message.requestId, `tabId: ${message.tabId}`)
-    sendResponse({ ok: true })
+    ;(async () => {
+      await registerActiveRequest(message.requestId, message.tabId)
+      log('register_active_request', 'info', message.requestId, `tabId: ${message.tabId}`)
+      sendResponse({ ok: true })
+    })()
     return true
   }
 
   if (message?.type === 'START_INSPECT_TAB') {
-    const requestId = Math.random().toString(36).slice(2, 9)
-    activeRequests.set(requestId, message.tabId)
-    log('start_inspect_tab', 'info', requestId, `tabId: ${message.tabId}`)
+    ;(async () => {
+      const requestId = Math.random().toString(36).slice(2, 9)
+      await registerActiveRequest(requestId, message.tabId)
+      log('start_inspect_tab', 'info', requestId, `tabId: ${message.tabId}`)
 
-    chrome.tabs.sendMessage(message.tabId, { type: 'START_INSPECT', requestId }, (response: any) => {
-      if (chrome.runtime.lastError) {
-        log('start_inspect_failed', 'error', requestId, chrome.runtime.lastError.message)
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message })
-      } else {
-        sendResponse({ ok: true, requestId, response })
-      }
-    })
+      chrome.tabs.sendMessage(message.tabId, { type: 'START_INSPECT', requestId }, (response: any) => {
+        if (chrome.runtime.lastError) {
+          log('start_inspect_failed', 'error', requestId, chrome.runtime.lastError.message)
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message })
+        } else {
+          sendResponse({ ok: true, requestId, response })
+        }
+      })
+    })()
     return true
   }
 
@@ -403,7 +431,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
       try {
-        const tabId = activeRequests.get(message.requestId)
+        // Pop (not peek): the registration is consumed even if the rest of
+        // the pipeline throws below. No retry path exists, so leaving a stale
+        // entry would just bloat storage.session on the next reclaim.
+        const tabId = await popActiveRequest(message.requestId)
 
         const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
         const cropped = await cropDataUrl(screenshot, message.clipRect)
@@ -428,6 +459,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             cdpCaptureError = String(error)
             log('cdp_capture_failed', 'error', message.requestId, cdpCaptureError)
           }
+        } else {
+          cdpCaptureError = 'sw-recycled-tab-id-missing'
+          log('cdp_capture_failed', 'error', message.requestId, cdpCaptureError)
         }
 
         const fallbackWarnings = message.payload?.element?.portableFallback?.warnings || []
@@ -512,10 +546,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         log('capture_done', 'info', message.requestId)
         
         try {
-          const tabId = activeRequests.get(message.requestId)
           if (tabId) {
             await chrome.tabs.sendMessage(tabId, { type: 'CAPTURE_DONE', requestId: message.requestId, folder })
-            activeRequests.delete(message.requestId)
           }
         } catch {
           log('capture_done_no_listener', 'error', message.requestId)
