@@ -91,7 +91,7 @@ const buildCapture = (): CaptureBundleV0 => ({
     target: { nodeId: 10, selector: '.cta' },
     inline: { declarations: [{ name: 'display', value: 'inline-flex' }] },
     matchedRules: [{ selectorList: ['.cta'], declarations: [{ name: 'color', value: '#fff' }] }],
-    keyframes: ['@keyframes pulse { from { opacity: 0.9; } to { opacity: 1; } }'],
+    keyframes: [{ name: 'pulse', cssText: '@keyframes pulse { from { opacity: 0.9; } to { opacity: 1; } }' }],
     diagnostics: { ruleCount: 1 },
   },
   shadowTopology: {
@@ -173,7 +173,7 @@ const buildCapture = (): CaptureBundleV0 => ({
         target: { nodeId: 10, selector: '.cta' },
         inline: { declarations: [{ name: 'display', value: 'inline-flex' }] },
         matchedRules: [{ selectorList: ['.cta'], declarations: [{ name: 'color', value: '#fff' }] }],
-        keyframes: ['@keyframes pulse { from { opacity: 0.9; } to { opacity: 1; } }'],
+        keyframes: [{ name: 'pulse', cssText: '@keyframes pulse { from { opacity: 0.9; } to { opacity: 1; } }' }],
         diagnostics: { ruleCount: 1 },
       },
       shadowTopology: {

@@ -104,9 +104,9 @@ const serializeCssGraph = (replayCapsule: ReplayCapsuleV0, selectedSelector: str
     css += toCssBlock(rule.selectorList, asArray(rule.declarations))
   }
 
-  for (const keyframes of asArray(cssGraph.keyframes)) {
-    if (!keyframes?.trim()) continue
-    css += `${keyframes.trim()}\n\n`
+  for (const keyframe of asArray(cssGraph.keyframes)) {
+    if (!keyframe?.cssText?.trim()) continue
+    css += `${keyframe.cssText.trim()}\n\n`
   }
 
   return css.trim()

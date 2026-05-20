@@ -5,6 +5,7 @@ import {
   type InlineStylesResponse,
   type MatchedStylesResponse,
 } from './cssCaptureNormalization'
+import { captureKeyframeRules, captureKeyframesFromRuntime } from './cssKeyframesCapture'
 
 export interface CSSCaptureResult {
   cssGraph?: ReturnType<typeof normalizeMatchedStyleGraph>
@@ -61,11 +62,23 @@ export const captureCSSProvenanceGraph = async (
   if (failedCalls.length > 0 && failedCalls.length < 3) warnings.push('css-capture-partial-failure')
   if (!matched && !computed && !inline) return { warnings: Array.from(new Set([...warnings, 'css-capture-no-data'])) }
 
+  // Two complementary sources:
+  // 1. CDP CSS.getStyleSheetText over matched stylesheets — survives cross-origin,
+  //    but only covers sheets that have matched rules for this node.
+  // 2. Runtime.evaluate walking document + shadowRoots + adoptedStyleSheets —
+  //    finds @keyframes defined in any same-origin sheet (e.g. a shared
+  //    animations.css that isn't matched by this element).
+  // Runtime goes last so resolveKeyframes' last-wins tiebreaker picks it.
+  const keyframeRulesFromMatched = await captureKeyframeRules(client, matched, warnings)
+  const keyframeRulesFromRuntime = await captureKeyframesFromRuntime(client, warnings)
+  const keyframeRules = [...keyframeRulesFromMatched, ...keyframeRulesFromRuntime]
+
   const cssGraph = normalizeMatchedStyleGraph({
     target,
     matched,
     computed,
     inline,
+    keyframeRules,
     warnings,
   })
 
