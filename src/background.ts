@@ -94,6 +94,8 @@ const debugLog: DebugEvent[] = []
 // `chrome.storage.session` persists across SW reclamation but lives in memory only.
 // Module-level state would be lost when MV3 evicts the service worker between
 // START_INSPECT_TAB and ELEMENT_SELECTED (see issue #30).
+// Note: get→mutate→set is not atomic; concurrent registrations could clobber
+// each other. Safe today because the picker flow is single-user, single-tab.
 export const registerActiveRequest = async (requestId: string, tabId: number): Promise<void> => {
   const { activeRequests = {} } = (await chrome.storage.session.get(['activeRequests'])) as {
     activeRequests?: Record<string, number>
@@ -429,6 +431,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'ELEMENT_SELECTED') {
     ;(async () => {
       try {
+        // Pop (not peek): the registration is consumed even if the rest of
+        // the pipeline throws below. No retry path exists, so leaving a stale
+        // entry would just bloat storage.session on the next reclaim.
         const tabId = await popActiveRequest(message.requestId)
 
         const screenshot = await chrome.tabs.captureVisibleTab({ format: 'png' })
