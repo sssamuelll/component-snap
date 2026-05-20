@@ -531,16 +531,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
 
         const folder = await saveSnapFiles(enrichedPayload)
-        
-        await chrome.storage.local.clear()
-        
-        await chrome.storage.local.set({ 
-          lastSelection: { 
-            ...enrichedPayload, 
-            snapFolder: folder, 
+
+        await chrome.storage.local.set({
+          lastSelection: {
+            ...enrichedPayload,
+            snapFolder: folder,
             requestId: message.requestId,
             snappedAt: new Date().toISOString()
-          } 
+          }
         })
 
         log('capture_done', 'info', message.requestId)

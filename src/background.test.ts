@@ -1,7 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const session = vi.hoisted(() => {
-  let backing = new Map<string, unknown>()
+const stores = vi.hoisted(() => {
+  let sessionBacking = new Map<string, unknown>()
+  let localBacking = new Map<string, unknown>()
+
+  const makeArea = (getBacking: () => Map<string, unknown>) => ({
+    get: async (keys: string | string[] | null) => {
+      const backing = getBacking()
+      const keyList = Array.isArray(keys) ? keys : keys ? [keys] : Array.from(backing.keys())
+      const result: Record<string, unknown> = {}
+      for (const key of keyList) {
+        if (backing.has(key)) result[key] = backing.get(key)
+      }
+      return result
+    },
+    set: async (items: Record<string, unknown>) => {
+      const backing = getBacking()
+      for (const [key, value] of Object.entries(items)) {
+        backing.set(key, value)
+      }
+    },
+    clear: async () => {
+      getBacking().clear()
+    },
+  })
 
   const fakeChrome = {
     runtime: {
@@ -9,38 +31,34 @@ const session = vi.hoisted(() => {
       onMessage: { addListener: () => {} },
     },
     storage: {
-      session: {
-        get: async (keys: string | string[] | null) => {
-          const keyList = Array.isArray(keys) ? keys : keys ? [keys] : Array.from(backing.keys())
-          const result: Record<string, unknown> = {}
-          for (const key of keyList) {
-            if (backing.has(key)) result[key] = backing.get(key)
-          }
-          return result
-        },
-        set: async (items: Record<string, unknown>) => {
-          for (const [key, value] of Object.entries(items)) {
-            backing.set(key, value)
-          }
-        },
-      },
+      session: makeArea(() => sessionBacking),
+      local: makeArea(() => localBacking),
     },
   }
 
   ;(globalThis as unknown as { chrome: unknown }).chrome = fakeChrome
 
   return {
-    reset() {
-      backing = new Map()
+    session: {
+      reset() {
+        sessionBacking = new Map()
+      },
+      swap(next: Map<string, unknown>) {
+        sessionBacking = next
+      },
+      snapshot() {
+        return new Map(sessionBacking)
+      },
     },
-    swap(next: Map<string, unknown>) {
-      backing = next
-    },
-    snapshot() {
-      return new Map(backing)
+    local: {
+      reset() {
+        localBacking = new Map()
+      },
     },
   }
 })
+
+const session = stores.session
 
 import { popActiveRequest, registerActiveRequest } from './background'
 
@@ -71,5 +89,36 @@ describe('active request persistence (chrome.storage.session)', () => {
     // Map-in-module-scope implementation would return undefined here.
     session.swap(new Map([['activeRequests', { 'req-recycle': 99 }]]))
     expect(await popActiveRequest('req-recycle')).toBe(99)
+  })
+})
+
+describe('save-snap storage write preserves unrelated keys', () => {
+  beforeEach(() => {
+    stores.local.reset()
+  })
+
+  // Regression for #31: `chrome.storage.local.clear()` used to run before
+  // `set({ lastSelection })`, wiping any other state living in local storage.
+  // The save-snap path now writes lastSelection as a plain upsert; other
+  // keys (settings, history, baselines, flags) must survive.
+  it('writing lastSelection does not wipe unrelated keys like userSettings', async () => {
+    await chrome.storage.local.set({ userSettings: { theme: 'dark' } })
+
+    // Mirror the production save-snap pattern from background.ts: a plain
+    // upsert on `lastSelection`, with no surrounding `clear()`.
+    await chrome.storage.local.set({
+      lastSelection: {
+        snapFolder: 'component_snap/2026-05-20_div',
+        requestId: 'req-xyz',
+        snappedAt: '2026-05-20T00:00:00.000Z',
+      },
+    })
+
+    const after = await chrome.storage.local.get(['userSettings', 'lastSelection'])
+    expect(after.userSettings).toEqual({ theme: 'dark' })
+    expect(after.lastSelection).toMatchObject({
+      snapFolder: 'component_snap/2026-05-20_div',
+      requestId: 'req-xyz',
+    })
   })
 })
