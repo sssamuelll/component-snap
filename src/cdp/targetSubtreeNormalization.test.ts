@@ -185,6 +185,43 @@ describe('normalizeTargetSubtree', () => {
     expect(result?.reconstruction?.preservedLayeredElementCount).toBeGreaterThanOrEqual(4)
   })
 
+  it('detects scene-like subtrees via inline positioning alone, without custom tags or scene class tokens', () => {
+    const sceneChild =
+      '<div style="position:absolute;transform:translate(40px, 40px);width:40px;height:40px"></div>'
+    const result = normalizeTargetSubtree({
+      source: 'runtime-object',
+      html: `<div>${sceneChild.repeat(6)}</div>`,
+      nodeCount: 7,
+      elementCount: 7,
+      textNodeCount: 0,
+      textLength: 0,
+      maxDepth: 2,
+    })
+
+    expect(result?.reconstruction?.mode).toBe('scene-preserving')
+    expect(result?.warnings).toContain('target-candidate-scene-like-subtree')
+    expect(result?.warnings).toContain('target-candidate-reconstruction:scene-preserving')
+    expect(result?.html).toContain(
+      '<div style="position:absolute;transform:translate(40px, 40px);width:40px;height:40px"></div>',
+    )
+  })
+
+  it('drops inline style on non-scene elements while keeping the host tag', () => {
+    const result = normalizeTargetSubtree({
+      source: 'runtime-object',
+      html: '<button style="color: red">Hi</button>',
+      nodeCount: 2,
+      elementCount: 1,
+      textNodeCount: 1,
+      textLength: 2,
+      maxDepth: 1,
+    })
+
+    expect(result?.html).toBe('<button>Hi</button>')
+    expect(result?.html).not.toContain('style=')
+    expect(result?.removedAttributeCounts.style).toBe(1)
+  })
+
   it('avoids collapsing visually meaningful empty scene layers even when they are div wrappers', () => {
     const result = normalizeTargetSubtree({
       source: 'runtime-object',
