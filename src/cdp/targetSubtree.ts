@@ -34,6 +34,7 @@ const MATERIALIZE_SUBTREE_FUNCTION = String(function materializeSubtree(this: No
     'id',
     'class',
     'role',
+    'style',
     'type',
     'name',
     'value',

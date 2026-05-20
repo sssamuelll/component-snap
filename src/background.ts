@@ -137,10 +137,6 @@ const log = (event: string, level: 'info' | 'error' = 'info', requestId?: string
 
 const sanitize = (input: string) => input.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
 
-const PIPELINE_VERSION = 'observability-v1'
-const BUILD_COMMIT_SHA = '85b8cae'
-const BUILD_TIMESTAMP = '2026-03-11T17:02:38+01:00'
-
 const deriveProvenance = (payload: StoredPayload) => {
   const promotedSelector =
     payload.element?.targetFingerprint?.promotedStableSelector ||
@@ -296,9 +292,9 @@ const saveSnapFiles = async (payload: StoredPayload) => {
     exportMode: payload.exportMode,
     exportTier: payload.exportTier || 'fallback',
     build: {
-      commitSha: BUILD_COMMIT_SHA,
-      timestamp: BUILD_TIMESTAMP,
-      pipelineVersion: PIPELINE_VERSION,
+      commitSha: __BUILD_COMMIT_SHA__,
+      timestamp: __BUILD_TIMESTAMP__,
+      pipelineVersion: __PIPELINE_VERSION__,
     },
     provenance,
     frame,
