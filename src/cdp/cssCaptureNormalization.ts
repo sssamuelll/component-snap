@@ -1,3 +1,4 @@
+import { resolveKeyframes, type ParsedKeyframeRule } from './cssKeyframesCapture'
 import type { MatchedStyleGraphV0, MatchedRuleV0, StyleDeclarationV0 } from './types'
 
 type CSSRuleOrigin = 'regular' | 'user-agent' | 'injected' | 'inspector' | 'inline'
@@ -63,6 +64,7 @@ export type NormalizeInput = {
   matched?: MatchedStylesResponse
   computed?: ComputedStyleResponse
   inline?: InlineStylesResponse
+  keyframeRules?: ParsedKeyframeRule[]
   warnings?: string[]
 }
 
@@ -398,6 +400,8 @@ export const normalizeMatchedStyleGraph = (input: NormalizeInput): MatchedStyleG
   if (keyframeResult.usedHeuristic && keyframeResult.names.length > 0) warnings.push('keyframes-derived-heuristically')
   if (keyframeResult.fromComputed) warnings.push('keyframes-from-computed')
 
+  const resolvedKeyframes = resolveKeyframes(keyframeResult.names, input.keyframeRules, warnings)
+
   const customPropertyResult = collectCustomProperties(matchedRules, inlineDeclarations, computed)
   if (customPropertyResult.referenceOnlyNames.length > 0) warnings.push('custom-property-reference-only')
   if (customPropertyResult.unresolvedReferenceNames.length > 0) warnings.push('custom-property-reference-unresolved')
@@ -418,7 +422,7 @@ export const normalizeMatchedStyleGraph = (input: NormalizeInput): MatchedStyleG
     matchedRules,
     computed,
     customProperties: customPropertyResult.entries,
-    keyframes: keyframeResult.names,
+    keyframes: resolvedKeyframes,
     diagnostics: {
       stylesheetCount,
       ruleCount: matchedRules.length,
@@ -428,7 +432,7 @@ export const normalizeMatchedStyleGraph = (input: NormalizeInput): MatchedStyleG
       customPropertyReferenceCount: customPropertyResult.referenceCount,
       customPropertyReferenceOnlyCount: customPropertyResult.referenceOnlyNames.length,
       unresolvedCustomPropertyReferenceCount: customPropertyResult.unresolvedReferenceNames.length,
-      keyframeCount: keyframeResult.names.length,
+      keyframeCount: resolvedKeyframes.length,
       matchedRuleWithOriginCount,
       matchedRuleWithoutOriginCount,
       matchedRuleWithoutSelectorCount,

@@ -30,7 +30,7 @@ const baseReplayCapsule = (): ReplayCapsuleV0 => ({
         },
       ],
       customProperties: [{ name: '--brand', value: '#f00' }],
-      keyframes: ['@keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }'],
+      keyframes: [{ name: 'pulse', cssText: '@keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }' }],
     },
     shadowTopology: {
       roots: [
@@ -132,7 +132,8 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.artifacts.js).toContain('const rootSelector = "[data-csnap-root=\\"true\\"]";')
     expect(result.artifacts.css).toContain('.cta, button.cta')
     expect(result.artifacts.css).toContain('--brand: #f00')
-    expect(result.artifacts.css).toContain('@keyframes pulse')
+    expect(result.artifacts.css).toContain('@keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }')
+    expect(() => new CSSStyleSheet().replaceSync(result.artifacts.css)).not.toThrow()
     expect(result.artifacts.html).toContain('<div data-csnap-root="true" data-csnap-capsule-root="true" data-csnap-selector=".cta" class="cta"><button class="cta"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect')
     expect(result.artifacts.html).not.toContain('<rpl-tooltip')
     expect(result.artifacts.html).not.toContain('<path')

@@ -60,7 +60,9 @@ describe('normalizeMatchedStyleGraph', () => {
     })
     expect(graph.matchedRules[1]?.origin).toBe('inline')
     expect(graph.matchedRules[0]?.declarations.some((declaration) => declaration.name === '--button-bg')).toBe(true)
-    expect(graph.keyframes).toEqual(['pulse', 'fade-in'])
+    expect(graph.keyframes).toEqual([])
+    expect(graph.diagnostics?.warnings).toContain('keyframes-name-undefined:pulse')
+    expect(graph.diagnostics?.warnings).toContain('keyframes-name-undefined:fade-in')
     expect(graph.customProperties?.some((entry) => entry.name === '--button-bg')).toBe(true)
     expect(graph.customProperties?.some((entry) => entry.source === 'reference:inline')).toBe(true)
     expect(graph.diagnostics?.warnings).toContain('keyframes-derived-heuristically')
@@ -68,7 +70,7 @@ describe('normalizeMatchedStyleGraph', () => {
     expect(graph.diagnostics?.warnings).not.toContain('stylesheet-source-missing')
     expect(graph.diagnostics?.ruleCount).toBe(2)
     expect(graph.diagnostics?.matchedRuleWithOriginCount).toBe(2)
-    expect(graph.diagnostics?.keyframeCount).toBe(2)
+    expect(graph.diagnostics?.keyframeCount).toBe(0)
   })
 
   it('adds empty-state diagnostics when no style data is present', () => {
@@ -128,7 +130,8 @@ describe('normalizeMatchedStyleGraph', () => {
 
     expect(graph.diagnostics?.warnings).toContain('matched-rules-empty')
     expect(graph.diagnostics?.warnings).toContain('provenance-degraded-computed-only')
-    expect(graph.keyframes).toEqual(['spin'])
+    expect(graph.keyframes).toEqual([])
+    expect(graph.diagnostics?.warnings).toContain('keyframes-name-undefined:spin')
   })
 
   it('preserves user-agent origin in matched rules', () => {
@@ -193,7 +196,9 @@ describe('normalizeMatchedStyleGraph', () => {
       },
     })
 
-    expect(graph.keyframes).toEqual(['chip-pop', 'chip-fade'])
+    expect(graph.keyframes).toEqual([])
+    expect(graph.diagnostics?.warnings).toContain('keyframes-name-undefined:chip-pop')
+    expect(graph.diagnostics?.warnings).toContain('keyframes-name-undefined:chip-fade')
     expect(graph.customProperties?.some((entry) => entry.name === '--chip-bg' && entry.source === 'rule:.chip')).toBe(true)
     expect(graph.customProperties?.some((entry) => entry.name === '--chip-outline' && entry.source === 'inline')).toBe(true)
     expect(graph.diagnostics?.customPropertyReferenceCount).toBe(2)

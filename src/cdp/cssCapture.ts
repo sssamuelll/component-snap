@@ -5,6 +5,7 @@ import {
   type InlineStylesResponse,
   type MatchedStylesResponse,
 } from './cssCaptureNormalization'
+import { captureKeyframeRules } from './cssKeyframesCapture'
 
 export interface CSSCaptureResult {
   cssGraph?: ReturnType<typeof normalizeMatchedStyleGraph>
@@ -61,11 +62,14 @@ export const captureCSSProvenanceGraph = async (
   if (failedCalls.length > 0 && failedCalls.length < 3) warnings.push('css-capture-partial-failure')
   if (!matched && !computed && !inline) return { warnings: Array.from(new Set([...warnings, 'css-capture-no-data'])) }
 
+  const keyframeRules = await captureKeyframeRules(client, matched, warnings)
+
   const cssGraph = normalizeMatchedStyleGraph({
     target,
     matched,
     computed,
     inline,
+    keyframeRules,
     warnings,
   })
 

@@ -337,7 +337,7 @@ export interface MatchedStyleGraphV0 {
   matchedRules: MatchedRuleV0[]
   computed?: Array<{ name: string; value: string }>
   customProperties?: Array<{ name: string; value: string; source?: string }>
-  keyframes?: string[]
+  keyframes?: Array<{ name: string; cssText: string }>
   diagnostics?: {
     stylesheetCount?: number
     ruleCount?: number
