@@ -51,11 +51,15 @@ export const runCDPCapture = async (seed: CaptureSeed): Promise<CaptureBundleV0>
     let cssGraph: CaptureBundleV0['cssGraph']
 
     if (nodeMapping?.resolved && nodeMapping.node?.nodeId) {
-      const cssCapture = await captureCSSProvenanceGraph(client, {
-        nodeId: nodeMapping.node.nodeId,
-        backendNodeId: nodeMapping.node.backendNodeId,
-        selector: seed.targetFingerprint?.stableSelector || seed.stableSelector || seed.selectedSelector,
-      })
+      const cssCapture = await captureCSSProvenanceGraph(
+        client,
+        {
+          nodeId: nodeMapping.node.nodeId,
+          backendNodeId: nodeMapping.node.backendNodeId,
+          selector: seed.targetFingerprint?.stableSelector || seed.stableSelector || seed.selectedSelector,
+        },
+        { walkSubtree: true },
+      )
 
       cssGraph = cssCapture.cssGraph
       warnings.push(...cssCapture.warnings.map((warning) => `css_capture: ${warning}`))

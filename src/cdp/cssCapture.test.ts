@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { captureCSSProvenanceGraph, normalizeMatchedStyleGraph } from './cssCapture'
+import { captureCSSProvenanceGraph, captureSubtreeMatchedRules, normalizeMatchedStyleGraph } from './cssCapture'
 import type { CDPClient } from './client'
 
 describe('normalizeMatchedStyleGraph', () => {
@@ -317,5 +317,171 @@ describe('captureCSSProvenanceGraph', () => {
     expect(result.warnings).toContain('computed-style-failed')
     expect(result.warnings).toContain('inline-style-failed')
     expect(result.warnings).toContain('css-capture-no-data')
+  })
+
+  it('walks the subtree and merges descendant matched rules into the cssGraph when walkSubtree is enabled', async () => {
+    const subtreeNodes = {
+      nodeId: 1,
+      nodeType: 1,
+      nodeName: 'DIV',
+      children: [
+        {
+          nodeId: 2,
+          nodeType: 1,
+          nodeName: 'BUTTON',
+          children: [
+            { nodeId: 3, nodeType: 1, nodeName: 'SPAN' },
+          ],
+        },
+      ],
+    }
+
+    const rulesByNode: Record<number, unknown[]> = {
+      1: [
+        {
+          rule: {
+            origin: 'regular',
+            styleSheetId: 'sheet-root',
+            sourceURL: 'https://example.com/app.css',
+            selectorList: { selectors: [{ text: '.root' }] },
+            style: { range: { startLine: 0, startColumn: 0 }, cssProperties: [{ name: 'display', value: 'flex' }] },
+          },
+        },
+      ],
+      2: [
+        // duplicate root rule (same stylesheet + range + selector) — should dedup
+        {
+          rule: {
+            origin: 'regular',
+            styleSheetId: 'sheet-root',
+            sourceURL: 'https://example.com/app.css',
+            selectorList: { selectors: [{ text: '.root' }] },
+            style: { range: { startLine: 0, startColumn: 0 }, cssProperties: [{ name: 'display', value: 'flex' }] },
+          },
+        },
+        {
+          rule: {
+            origin: 'regular',
+            styleSheetId: 'sheet-1',
+            sourceURL: 'https://example.com/app.css',
+            selectorList: { selectors: [{ text: '.btn' }] },
+            style: { range: { startLine: 10, startColumn: 0 }, cssProperties: [{ name: 'background', value: '#fff' }] },
+          },
+        },
+      ],
+      3: [
+        {
+          rule: {
+            origin: 'regular',
+            styleSheetId: 'sheet-1',
+            sourceURL: 'https://example.com/app.css',
+            selectorList: { selectors: [{ text: '.btn .label' }] },
+            style: { range: { startLine: 20, startColumn: 0 }, cssProperties: [{ name: 'color', value: 'red' }] },
+          },
+        },
+      ],
+    }
+
+    const client = {
+      send: async (method: string, params: Record<string, unknown>) => {
+        if (method === 'CSS.enable') return {}
+        if (method === 'DOM.describeNode' && params.nodeId === 1) return { node: subtreeNodes }
+        if (method === 'CSS.getMatchedStylesForNode') {
+          const nodeId = params.nodeId as number
+          return { matchedCSSRules: rulesByNode[nodeId] || [] }
+        }
+        if (method === 'CSS.getComputedStyleForNode') return { computedStyle: [{ name: 'display', value: 'flex' }] }
+        if (method === 'CSS.getInlineStylesForNode') return { inlineStyle: { cssProperties: [] } }
+        throw new Error(`unexpected method: ${method}`)
+      },
+    } as unknown as CDPClient
+
+    const result = await captureCSSProvenanceGraph(client, { nodeId: 1, selector: '.root' }, { walkSubtree: true })
+
+    expect(result.cssGraph).toBeDefined()
+    const rules = result.cssGraph?.matchedRules ?? []
+    const selectorTexts = rules.flatMap((rule) => rule.selectorList)
+    expect(selectorTexts).toContain('.root')
+    expect(selectorTexts).toContain('.btn')
+    expect(selectorTexts).toContain('.btn .label')
+    expect(rules.length).toBe(3)
+
+    const warnings = result.warnings.join(' ')
+    expect(warnings).toContain('subtree-stats:elements=2')
+    expect(warnings).toContain('subtree-stats:matched-calls=2')
+  })
+
+  it('reports subtree describe failure as a warning without crashing the capture', async () => {
+    const client = {
+      send: async (method: string, params: Record<string, unknown>) => {
+        if (method === 'CSS.enable') return {}
+        if (method === 'DOM.describeNode') throw new Error('node detached')
+        if (method === 'CSS.getMatchedStylesForNode') {
+          if (params.nodeId === 1) return { matchedCSSRules: [] }
+          throw new Error('unreachable')
+        }
+        if (method === 'CSS.getComputedStyleForNode') return { computedStyle: [] }
+        if (method === 'CSS.getInlineStylesForNode') return { inlineStyle: { cssProperties: [] } }
+        throw new Error(`unexpected method: ${method}`)
+      },
+    } as unknown as CDPClient
+
+    const result = await captureCSSProvenanceGraph(client, { nodeId: 1 }, { walkSubtree: true })
+    expect(result.cssGraph).toBeDefined()
+    const warningsText = result.warnings.join(' ')
+    expect(warningsText).toContain('subtree-describe-failed')
+  })
+})
+
+describe('captureSubtreeMatchedRules', () => {
+  it('caps the walker at maxNodes and emits a truncation warning', async () => {
+    const buildChain = (depth: number, nodeIdStart: number): unknown => ({
+      nodeId: nodeIdStart,
+      nodeType: 1,
+      nodeName: 'DIV',
+      children: depth === 0 ? [] : [buildChain(depth - 1, nodeIdStart + 1)],
+    })
+
+    const client = {
+      send: async (method: string) => {
+        if (method === 'DOM.describeNode') return { node: buildChain(10, 100) }
+        if (method === 'CSS.getMatchedStylesForNode') return { matchedCSSRules: [] }
+        throw new Error(`unexpected method: ${method}`)
+      },
+    } as unknown as CDPClient
+
+    const result = await captureSubtreeMatchedRules(client, 100, { maxNodes: 3, maxDepth: 20 })
+    expect(result.stats.elementsConsidered).toBe(3)
+    expect(result.stats.truncated).toBe(true)
+    expect(result.warnings.join(' ')).toContain('subtree-walker-truncated:3')
+  })
+
+  it('counts failed matched-style calls per descendant separately', async () => {
+    const client = {
+      send: async (method: string, params: Record<string, unknown>) => {
+        if (method === 'DOM.describeNode') {
+          return {
+            node: {
+              nodeId: 1,
+              nodeType: 1,
+              children: [
+                { nodeId: 2, nodeType: 1 },
+                { nodeId: 3, nodeType: 1 },
+              ],
+            },
+          }
+        }
+        if (method === 'CSS.getMatchedStylesForNode') {
+          if (params.nodeId === 2) throw new Error('detached')
+          return { matchedCSSRules: [] }
+        }
+        throw new Error(`unexpected method: ${method}`)
+      },
+    } as unknown as CDPClient
+
+    const result = await captureSubtreeMatchedRules(client, 1)
+    expect(result.stats.elementsConsidered).toBe(2)
+    expect(result.stats.failedStyleCalls).toBe(1)
+    expect(result.warnings.join(' ')).toContain('subtree-matched-style-failures:1')
   })
 })
