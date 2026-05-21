@@ -179,11 +179,15 @@ describe('runCDPCapture css integration', () => {
     })
 
     const bundle = await runCDPCapture(createSeed())
-    expect(mocks.captureCSSProvenanceGraph).toHaveBeenCalledWith(expect.anything(), {
-      nodeId: 44,
-      backendNodeId: 77,
-      selector: '.target',
-    })
+    expect(mocks.captureCSSProvenanceGraph).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        nodeId: 44,
+        backendNodeId: 77,
+        selector: '.target',
+      },
+      { walkSubtree: true },
+    )
     expect(bundle.cssGraph?.target.nodeId).toBe(44)
     expect(bundle.shadowTopology?.diagnostics?.totalShadowRoots).toBe(0)
     expect(bundle.resourceGraph?.nodes[0]?.kind).toBe('document')
