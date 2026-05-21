@@ -458,6 +458,72 @@ describe('extractPortableFromReplayCapsule', () => {
     expect(result.diagnostics.warnings).toContain('replay-capsule-preservation-reason:chart-scene-root-retained:2')
   })
 
+  it('marks output quality as portable when author rules cover descendant selectors', () => {
+    const capture = baseCapture()
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.cssGraph!.matchedRules = [
+        {
+          origin: 'regular',
+          selectorList: ['.cta'],
+          declarations: [{ name: 'background', value: '#4d5156' }],
+        },
+        {
+          origin: 'regular',
+          selectorList: ['.cta .icon', '.cta span'],
+          declarations: [{ name: 'color', value: '#fff' }],
+        },
+      ]
+    }
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.diagnostics.outputQuality).toBe('portable')
+    expect(result.diagnostics.warnings).not.toContain('replay-capsule-css-descendant-coverage-missing')
+  })
+
+  it('marks output quality as fragile when matched rules only target the selected element', () => {
+    const capture = baseCapture()
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.cssGraph!.matchedRules = [
+        {
+          origin: 'user-agent',
+          selectorList: ['div'],
+          declarations: [{ name: 'display', value: 'block' }],
+        },
+        {
+          origin: 'regular',
+          selectorList: ['.cta', 'button.cta'],
+          declarations: [
+            { name: 'background', value: '#4d5156' },
+            { name: 'border-radius', value: '26px' },
+          ],
+        },
+      ]
+    }
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.diagnostics.outputQuality).toBe('fragile')
+    expect(result.diagnostics.warnings).toContain('replay-capsule-css-descendant-coverage-missing')
+  })
+
+  it('flags fragile output even when user-agent defaults are the only descendant-like rules', () => {
+    const capture = baseCapture()
+    if (capture.replayCapsule) {
+      capture.replayCapsule.snapshot.cssGraph!.matchedRules = [
+        {
+          origin: 'user-agent',
+          selectorList: ['div', 'address, blockquote, center, div, figure'],
+          declarations: [{ name: 'unicode-bidi', value: 'isolate' }],
+        },
+      ]
+    }
+    const result = extractPortableFromReplayCapsule(capture, '.fallback')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.diagnostics.outputQuality).toBe('fragile')
+  })
+
   it('surfaces scene-preserving candidate exports for board-like captures', () => {
     const capture = baseCapture()
     if (capture.replayCapsule) {

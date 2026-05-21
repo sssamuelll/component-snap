@@ -1,6 +1,6 @@
 import { buildPortableFallbackComponentJs } from '../portableFallback/extractor'
 import type { TargetClass, TargetSubtype } from './nodeMappingTypes'
-import type { CaptureBundleV0, MatchedRuleV0, ReplayCapsuleV0, ResourceGraphV0, ShadowTopologyV0, StyleDeclarationV0 } from './types'
+import type { CaptureBundleV0, MatchedRuleV0, MatchedStyleGraphV0, ReplayCapsuleV0, ResourceGraphV0, ShadowTopologyV0, StyleDeclarationV0 } from './types'
 
 type PortableExportSource = 'replay-capsule' | 'portable-fallback'
 type PortableTargetClass = TargetClass | 'semantic-ui'
@@ -198,6 +198,26 @@ const getRequiredUnresolvedAssetCount = (resourceGraph: ResourceGraphV0 | undefi
 
 const hasAnyUsableRule = (rules: MatchedRuleV0[] | undefined) =>
   asArray(rules).some((rule) => rule.selectorList?.length && asArray(rule.declarations).some((declaration) => !declaration.disabled))
+
+const cssGraphCoversDescendants = (cssGraph: MatchedStyleGraphV0, selectedSelector: string): boolean => {
+  const authorRules = asArray(cssGraph.matchedRules).filter((rule) => rule.origin !== 'user-agent')
+  if (authorRules.length === 0) return false
+
+  const targetTokens = selectorTokens(selectedSelector)
+  const targetClassSet = new Set(targetTokens.classes)
+
+  for (const rule of authorRules) {
+    for (const selectorText of asArray(rule.selectorList)) {
+      const sel = selectorText.trim()
+      if (!sel) continue
+      if (/[\s>+~]/.test(sel)) return true
+      const ruleTokens = selectorTokens(sel)
+      if (ruleTokens.id && ruleTokens.id !== targetTokens.id) return true
+      if (ruleTokens.classes.some((cls) => !targetClassSet.has(cls))) return true
+    }
+  }
+  return false
+}
 
 const getPortableTargetClass = (
   candidateSubtree: CaptureBundleV0['candidateSubtree'],
@@ -622,8 +642,15 @@ export const extractPortableFromReplayCapsule = (
     confidencePenalty += 0.18
   }
 
+  const cssCoversDescendants = cssGraphCoversDescendants(cssGraph, selectedSelector)
+  if (!cssCoversDescendants) {
+    warnings.push('replay-capsule-css-descendant-coverage-missing')
+    confidencePenalty += 0.18
+  }
+
   confidencePenalty = clamp(confidencePenalty, 0, 0.92)
   const confidence = clamp(1 - confidencePenalty, 0.08, 1)
+  const outputQuality: 'portable' | 'fragile' = cssCoversDescendants ? 'portable' : 'fragile'
 
   return {
     ok: true,
@@ -646,7 +673,7 @@ export const extractPortableFromReplayCapsule = (
       warnings,
       confidencePenalty,
       confidence,
-      outputQuality: 'portable',
+      outputQuality,
     },
   }
 }

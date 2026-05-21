@@ -374,8 +374,9 @@ const saveSnapFiles = async (payload: StoredPayload) => {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Component Snap Freeze</title>
+    <link rel="stylesheet" href="./component.css" />
     <style>
-      html, body { margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background-color: #fff; }
+      html, body { margin: 0; padding: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
       #freeze-root { display: inline-block; }
     </style>
   </head>
@@ -501,21 +502,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const fallbackWarnings = message.payload?.element?.portableFallback?.warnings || []
         const fallbackConfidencePenalty = message.payload?.element?.portableFallback?.confidencePenalty
         const fallbackConfidence = message.payload?.element?.portableFallback?.confidence
+        const fallbackNodeCount = message.payload?.element?.portableFallback?.stats?.nodeCount ?? 0
         const capsuleExtraction = extractPortableFromReplayCapsule(
           isCaptureBundle(cdpCapture) ? cdpCapture : undefined,
           message.payload?.element?.selector,
         )
+        const capsuleArtifactsFragile = capsuleExtraction.ok && capsuleExtraction.diagnostics.outputQuality === 'fragile'
+        const useCapsuleArtifacts = capsuleExtraction.ok && !(capsuleArtifactsFragile && fallbackNodeCount > 0)
         const fidelity = scoreCaptureFidelity({
           capture: isCaptureBundle(cdpCapture) ? cdpCapture : undefined,
-          portableDiagnostics: capsuleExtraction.ok
+          portableDiagnostics: useCapsuleArtifacts && capsuleExtraction.ok
             ? capsuleExtraction.diagnostics
             : {
                 source: 'portable-fallback',
-                targetClass: 'semantic-ui',
-                exportMode: 'semantic-ui-portable',
-                warnings: [...capsuleExtraction.warnings, ...fallbackWarnings],
+                targetClass: capsuleExtraction.ok ? capsuleExtraction.diagnostics.targetClass : 'semantic-ui',
+                exportMode: capsuleExtraction.ok ? capsuleExtraction.diagnostics.exportMode : 'semantic-ui-portable',
+                warnings: [
+                  ...(capsuleExtraction.ok
+                    ? ['portable-fallback-artifacts-preferred-over-fragile-capsule', ...capsuleExtraction.diagnostics.warnings]
+                    : capsuleExtraction.warnings),
+                  ...fallbackWarnings,
+                ],
                 confidencePenalty: fallbackConfidencePenalty,
                 confidence: fallbackConfidence,
+                outputQuality: 'portable',
               },
         })
 
@@ -523,7 +533,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ...message.payload,
           element: {
             ...message.payload?.element,
-            ...(capsuleExtraction.ok
+            ...(useCapsuleArtifacts && capsuleExtraction.ok
               ? {
                   html: capsuleExtraction.artifacts.html,
                   css: capsuleExtraction.artifacts.css,
@@ -534,33 +544,55 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               : {}),
           },
           cdpCapture,
-          exportMode: capsuleExtraction.ok ? capsuleExtraction.diagnostics.exportMode : 'semantic-ui-portable',
-          exportTier: capsuleExtraction.ok ? 'capsule' : 'fallback',
+          exportMode: useCapsuleArtifacts && capsuleExtraction.ok
+            ? capsuleExtraction.diagnostics.exportMode
+            : 'semantic-ui-portable',
+          exportTier: useCapsuleArtifacts && capsuleExtraction.ok ? 'capsule' : 'fallback',
           exportDiagnostics: {
-            source: capsuleExtraction.ok ? capsuleExtraction.diagnostics.source : 'portable-fallback',
+            source: useCapsuleArtifacts && capsuleExtraction.ok ? capsuleExtraction.diagnostics.source : 'portable-fallback',
             targetClass: capsuleExtraction.ok ? capsuleExtraction.diagnostics.targetClass : 'semantic-ui',
-            exportMode: capsuleExtraction.ok ? capsuleExtraction.diagnostics.exportMode : 'semantic-ui-portable',
-            warnings: capsuleExtraction.ok ? capsuleExtraction.diagnostics.warnings : [...capsuleExtraction.warnings, ...fallbackWarnings],
-            confidencePenalty: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidencePenalty : fallbackConfidencePenalty,
-            confidence: capsuleExtraction.ok ? capsuleExtraction.diagnostics.confidence : fallbackConfidence,
+            exportMode: useCapsuleArtifacts && capsuleExtraction.ok
+              ? capsuleExtraction.diagnostics.exportMode
+              : 'semantic-ui-portable',
+            warnings: useCapsuleArtifacts && capsuleExtraction.ok
+              ? capsuleExtraction.diagnostics.warnings
+              : [
+                  ...(capsuleExtraction.ok
+                    ? ['portable-fallback-artifacts-preferred-over-fragile-capsule', ...capsuleExtraction.diagnostics.warnings]
+                    : capsuleExtraction.warnings),
+                  ...fallbackWarnings,
+                ],
+            confidencePenalty: useCapsuleArtifacts && capsuleExtraction.ok
+              ? capsuleExtraction.diagnostics.confidencePenalty
+              : fallbackConfidencePenalty,
+            confidence: useCapsuleArtifacts && capsuleExtraction.ok
+              ? capsuleExtraction.diagnostics.confidence
+              : fallbackConfidence,
             fidelity,
             cdpError: cdpCaptureError,
           },
         }
 
-        if (capsuleExtraction.ok) {
+        if (useCapsuleArtifacts && capsuleExtraction.ok) {
           log(
             'portable_capsule_export_used',
             'info',
             message.requestId,
             `${capsuleExtraction.diagnostics.warnings.join(', ')} | confidence=${capsuleExtraction.diagnostics.confidence.toFixed(2)}`,
           )
+        } else if (capsuleExtraction.ok && capsuleArtifactsFragile) {
+          log(
+            'portable_fallback_preferred_over_fragile_capsule',
+            'info',
+            message.requestId,
+            `fallback nodeCount=${fallbackNodeCount}; capsule confidence=${capsuleExtraction.diagnostics.confidence.toFixed(2)} (output fragile, descendant CSS missing)`,
+          )
         } else if (enrichedPayload.exportDiagnostics?.warnings.length) {
           log(
             'portable_fallback_export_used',
             'info',
             message.requestId,
-            `${capsuleExtraction.reason}; ${enrichedPayload.exportDiagnostics.warnings.join(', ')} | confidence=${String(enrichedPayload.exportDiagnostics.confidence ?? 'n/a')}`,
+            `${capsuleExtraction.ok ? 'capsule-fragile' : capsuleExtraction.reason}; ${enrichedPayload.exportDiagnostics.warnings.join(', ')} | confidence=${String(enrichedPayload.exportDiagnostics.confidence ?? 'n/a')}`,
           )
         }
 
