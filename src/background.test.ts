@@ -60,7 +60,7 @@ const stores = vi.hoisted(() => {
 
 const session = stores.session
 
-import { popActiveRequest, registerActiveRequest } from './background'
+import { captureScreenshotDataUrl, popActiveRequest, registerActiveRequest, type ClipRect } from './background'
 
 describe('active request persistence (chrome.storage.session)', () => {
   beforeEach(() => {
@@ -89,6 +89,86 @@ describe('active request persistence (chrome.storage.session)', () => {
     // Map-in-module-scope implementation would return undefined here.
     session.swap(new Map([['activeRequests', { 'req-recycle': 99 }]]))
     expect(await popActiveRequest('req-recycle')).toBe(99)
+  })
+})
+
+describe('ELEMENT_SELECTED screenshot sourcing', () => {
+  const clipRect: ClipRect = { x: 10, y: 20, width: 100, height: 50, dpr: 2 }
+
+  const makeBundle = (overrides: { clipDataUrl?: string; fullPageDataUrl?: string }) => ({
+    version: '0' as const,
+    captureId: 'cap-1',
+    createdAt: '2026-05-20T00:00:00.000Z',
+    backend: 'cdp' as const,
+    seed: {},
+    screenshot: overrides,
+  })
+
+  it('uses CDP clipDataUrl and does not call captureVisibleTab when available', async () => {
+    const captureVisibleTab = vi.fn<() => Promise<string>>()
+    const cropDataUrl = vi.fn<(dataUrl: string, rect: ClipRect) => Promise<string | null>>()
+
+    const result = await captureScreenshotDataUrl(
+      makeBundle({ clipDataUrl: 'data:image/png;base64,<cdp>', fullPageDataUrl: 'data:image/png;base64,<full>' }),
+      clipRect,
+      captureVisibleTab,
+      cropDataUrl,
+    )
+
+    expect(result).toEqual({ dataUrl: 'data:image/png;base64,<cdp>', source: 'cdp-clip' })
+    expect(captureVisibleTab).not.toHaveBeenCalled()
+    expect(cropDataUrl).not.toHaveBeenCalled()
+  })
+
+  it('falls back to captureVisibleTab + crop when cdpCapture is undefined', async () => {
+    const captureVisibleTab = vi.fn<() => Promise<string>>().mockResolvedValue('data:image/png;base64,<tab>')
+    const cropDataUrl = vi
+      .fn<(dataUrl: string, rect: ClipRect) => Promise<string | null>>()
+      .mockResolvedValue('data:image/png;base64,<crop>')
+
+    const result = await captureScreenshotDataUrl(undefined, clipRect, captureVisibleTab, cropDataUrl)
+
+    expect(result).toEqual({ dataUrl: 'data:image/png;base64,<crop>', source: 'tab-crop' })
+    expect(captureVisibleTab).toHaveBeenCalledOnce()
+    expect(cropDataUrl).toHaveBeenCalledWith('data:image/png;base64,<tab>', clipRect)
+  })
+
+  it('falls back to captureVisibleTab when CDP returned fullPageDataUrl but no clipDataUrl', async () => {
+    const captureVisibleTab = vi.fn<() => Promise<string>>().mockResolvedValue('data:image/png;base64,<tab>')
+    const cropDataUrl = vi
+      .fn<(dataUrl: string, rect: ClipRect) => Promise<string | null>>()
+      .mockResolvedValue('data:image/png;base64,<crop>')
+
+    const result = await captureScreenshotDataUrl(
+      makeBundle({ fullPageDataUrl: 'data:image/png;base64,<full>' }),
+      clipRect,
+      captureVisibleTab,
+      cropDataUrl,
+    )
+
+    expect(result).toEqual({ dataUrl: 'data:image/png;base64,<crop>', source: 'tab-crop' })
+    expect(captureVisibleTab).toHaveBeenCalledOnce()
+    expect(cropDataUrl).toHaveBeenCalledOnce()
+  })
+
+  it('returns source: none without throwing when both CDP and tab fallback fail', async () => {
+    const captureVisibleTab = vi.fn<() => Promise<string>>().mockRejectedValue(new Error('inactive tab'))
+    const cropDataUrl = vi.fn<(dataUrl: string, rect: ClipRect) => Promise<string | null>>()
+
+    const result = await captureScreenshotDataUrl(undefined, clipRect, captureVisibleTab, cropDataUrl)
+
+    expect(result).toEqual({ dataUrl: undefined, source: 'none' })
+    expect(captureVisibleTab).toHaveBeenCalledOnce()
+    expect(cropDataUrl).not.toHaveBeenCalled()
+  })
+
+  it('returns source: none when cropDataUrl returns null (zero-px clip)', async () => {
+    const captureVisibleTab = vi.fn<() => Promise<string>>().mockResolvedValue('data:image/png;base64,<tab>')
+    const cropDataUrl = vi.fn<(dataUrl: string, rect: ClipRect) => Promise<string | null>>().mockResolvedValue(null)
+
+    const result = await captureScreenshotDataUrl(undefined, clipRect, captureVisibleTab, cropDataUrl)
+
+    expect(result).toEqual({ dataUrl: undefined, source: 'none' })
   })
 })
 
